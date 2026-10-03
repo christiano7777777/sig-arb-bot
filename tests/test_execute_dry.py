@@ -391,6 +391,20 @@ def test_exit_first_and_entries_capped_per_poll():
     assert actions == ["sell"] + ["buy"] * 4
 
 
+def test_swap_sizes_new_pair_to_what_the_seller_can_fund():
+    # new race: 100 pairs at 0.97, then deep liquidity at 0.995. Held race bids 0.990.
+    # The swap must buy only the 0.97 level (<= 0.990 - 0.001), not walk to 0.995 and find no seller.
+    new = {"D": ([(0.5, 100), (0.475, DEEP)], [(0.99, 5)]), "R": ([(0.53, DEEP)], [(0.99, 5)])}
+    fake = FakeClient({"Held race": SELLER_0990, "New race": new}, balance=50_000.5)
+    fake.held = {fake.ex_of("Held race", "D"): (-5000, 2450.0), fake.ex_of("Held race", "R"): (-5000, 2450.0)}
+    r = make_runner(fake, exposure=500)
+    r.poll()
+    assert [b["legs"][0]["action"] for _, b in r.sent] == ["sell", "buy"]
+    buy = r.sent[1][1]
+    assert buy["legs"][0]["quantity"] == 100                      # only the 0.97 level
+    assert sum(l["price"] for l in buy["legs"]) <= 0.990 - 0.001 + 1e-9
+
+
 def test_out_of_budget_poll_reads_no_books():
     # out of cash, many entry signals, no held race can fund a swap -> only the cheap reads
     races = {f"Race {i}": EDGE_01 for i in range(6)}

@@ -217,9 +217,14 @@ class Runner:
         # pre-check from the bulk quotes: the cheapest new pair is 1 - top edge, so no held race
         # bidding below that + ROTATE_MIN_GAIN can ever fund it. Then no book is read at all.
         c_top = 1.0 - self.top_edge(q, b)
-        if not self.sellers(q, held, b, c_top + config.ROTATE_MIN_GAIN):
+        possible = self.sellers(q, held, b, c_top + config.ROTATE_MIN_GAIN)
+        if not possible:
             return False
-        p = b.plan(b.books(), min_edge=config.ROTATE_ENTRY_EDGE, ignore_cash=True)
+        # size the new pair only down to the levels the best seller can pay for:
+        # buy levels priced <= best_S - ROTATE_MIN_GAIN (walking deeper would price out every seller)
+        best_s = max(s for s, _ in possible)
+        edge_needed = max(config.ROTATE_ENTRY_EDGE, 1.0 - (best_s - config.ROTATE_MIN_GAIN))
+        p = b.plan(b.books(), min_edge=edge_needed, ignore_cash=True)
         if p is None:
             return True
         qn, _, res_n, _ = p
