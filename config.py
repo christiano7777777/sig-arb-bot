@@ -35,7 +35,7 @@ RESERVE = 50_000             # core budget = cash above this, for any edge >= MI
 # set EXTRA_CAPITAL_ENABLED = False: the bot stops buying below RESERVE and gets cash back only from
 # exits at >= 1.000 (free). HARD_RESERVE stays untouched so the unequal-fill fix always has cash.
 EXTRA_CAPITAL_ENABLED = True
-EXTRA_MIN_EDGE = 0.015
+EXTRA_MIN_EDGE = 0.01      # user, 2026-10-04 (was 0.015): use more of the second 50k
 HARD_RESERVE = 1_000
 PER_RACE_CAP = None          # no per-race cap (user, 2026-10-04: higher edge gets priority instead)
 MAX_UNHEDGED_EXPOSURE = 500  # worst-case SUSQies on an unpaired leg per attempt (~1% of strategy capital)
