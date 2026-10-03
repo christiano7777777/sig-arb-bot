@@ -1,0 +1,72 @@
+# Runs the live bot. One run at a time; each run trades ~5 h 45 min (jobs are killed at 6 h),
+# then starts the next one. The hourly schedule restarts the chain if it ever breaks.
+#
+# Stop:   gh workflow disable arb-bot.yml   (no new runs)   and   gh run cancel <id>   (current run;
+#         the bot gets Ctrl-C, cancels its resting orders and exits). Every order also expires after 10 s.
+# Start:  gh workflow enable arb-bot.yml && gh workflow run arb-bot.yml
+# A halt (legs that could not be evened out, order errors) disables this workflow automatically.
+name: arb-bot
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 * * * *"
+
+concurrency:
+  group: arb-bot
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 358
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - run: pip install -r requirements.txt
+
+      - name: Trade
+        id: bot
+        env:
+          SUSQ_API_KEY: ${{ secrets.SUSQ_API_KEY }}
+          PYTHONIOENCODING: utf-8
+        run: |
+          set +e
+          python -u execute.py --live --max-runtime 20700 2>&1 | tee bot.log
+          echo "code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Halted -> disable this workflow
+        if: steps.bot.outputs.code == '3'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh workflow disable arb-bot.yml -R "$GITHUB_REPOSITORY"
+          echo "::error::Bot halted (see bot.log / STOP reason). Workflow disabled."
+          exit 1
+
+      - name: Start the next run
+        if: steps.bot.outputs.code == '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run arb-bot.yml -R "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME"
+
+      - name: Upload logs (no API key inside; kept 7 days)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-${{ github.run_id }}
+          path: |
+            bot.log
+            STOP
+            state/orders.jsonl
+          if-no-files-found: ignore
+          retention-days: 7

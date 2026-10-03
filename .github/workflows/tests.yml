@@ -1,0 +1,22 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt
+      - name: Unit tests (book walking, ticks, exits)
+        run: python -c "import tests.test_arb_math as t; n=[x for x in dir(t) if x.startswith('test_')]; [getattr(t, x)() for x in n]; print(len(n), 'passed')"
+      - name: Executor tests against a fake API (no network, no orders)
+        run: python tests/test_execute_dry.py

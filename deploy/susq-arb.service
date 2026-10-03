@@ -1,0 +1,19 @@
+[Unit]
+Description=SIG Predictions Cup NO+NO arbitrage bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=susq
+WorkingDirectory=/home/susq/sig-bot
+# holds SUSQ_API_KEY=...  (chmod 600, owned by root; never commit it)
+EnvironmentFile=/etc/susq-arb.env
+ExecStart=/home/susq/sig-bot/deploy/run_forever.sh
+# run_forever.sh exits 0 when a STOP file is present -> systemd leaves it stopped.
+# If the supervisor itself dies abnormally, systemd restarts it.
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target

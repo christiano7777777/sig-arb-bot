@@ -1,0 +1,13 @@
+# secrets
+.env
+*.key
+
+# run output (request/response logs, pending idempotency keys)
+logs/
+state/
+
+# python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
