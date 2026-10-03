@@ -11,3 +11,6 @@ __pycache__/
 *.pyc
 .pytest_cache/
 .venv/
+
+# kill switch: local only, never committed (a committed STOP stops the GitHub bot)
+STOP
