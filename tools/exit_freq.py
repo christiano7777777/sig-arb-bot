@@ -3,10 +3,11 @@ import re
 import sys
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from statistics import median
 
 sys.stdout.reconfigure(encoding="utf-8")
-sys.path.insert(0, r"C:\Users\user\Documents\SIG prediction cup")
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))   # project root
 from susq_client import SusqClient  # noqa: E402
 
 HK = timezone(timedelta(hours=8))
