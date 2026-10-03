@@ -23,6 +23,7 @@ Order books are quoted in YES terms, so `ask_NO = 1 - bid_YES` and `bid_NO = 1 -
   selling the held pairs that are cheapest to give up (highest current bid sum).
 - **Sizing:** walk both order books level by level with equal quantity on both legs, as long as each extra pair keeps the edge;
   capped by the cash above a reserve and by a worst-case one-legged exposure of 500 per attempt.
+  Cash below the 50k reserve (down to a 1k buffer) is used only for book levels with edge >= 0.015.
 - **Execution:** one atomic multi-leg order for both legs (marketable limits, 10 s expiry), then positions are re-read.
 
 ## Safety

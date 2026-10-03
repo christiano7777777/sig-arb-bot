@@ -64,12 +64,13 @@ class FakeClient:
 
 
 def make_runner(fake, min_edge=0.005, exposure=None, capital=50_000, reserve=50_000, race_cap=5_000,
-                denylist=()):
+                denylist=(), extra=False):
     # pin every setting the tests rely on, so editing config.py cannot silently change a test
     config.MIN_EDGE, config.MAX_UNHEDGED_EXPOSURE = min_edge, exposure
     config.MAX_CAPITAL_PER_RUN, config.RESERVE, config.PER_RACE_CAP = capital, reserve, race_cap
     config.EXIT_ENABLED, config.EXIT_MIN_SUM, config.TOURNAMENT_SLUG = True, 1.0, SLUG
     config.RACE_DENYLIST = set(denylist)
+    config.EXTRA_CAPITAL_ENABLED, config.EXTRA_MIN_EDGE, config.HARD_RESERVE = extra, 0.015, 1_000
     execute.STATE_DIR = Path(__file__).parent / "_state_test"
     execute.STOP_FILE = execute.STATE_DIR / "STOP"
     execute.STOP_FILE.unlink(missing_ok=True)          # a halt in an earlier test must not leak
@@ -153,7 +154,7 @@ def test_per_race_cap():
     fake.held = {fake.ex_of("Kansas Senate", "D"): (-4000, 440.0), fake.ex_of("Kansas Senate", "R"): (-4000, 4460.0)}
     r = make_runner(fake)
     r.poll()
-    assert [l["quantity"] for l in r.sent[0][1]["legs"]] == [101, 101]     # (5000 - 4900) / 0.99
+    assert [l["quantity"] for l in r.sent[0][1]["legs"]] == [100, 100]     # (5000 - 4900) / 0.995 worst-case limits
 
 
 def test_skip_when_holding_yes():
@@ -417,6 +418,43 @@ def test_out_of_budget_poll_reads_no_books():
     assert r.sent == []
     assert not any(g.endswith("/orderbook") for g in fake.gets), fake.gets
     assert len(fake.gets) <= 3, fake.gets                  # quotes + positions + one balance read
+
+
+# ---- option B: extra capital only for edge >= 0.015 ---------------------------
+EDGE_02_DEEP = {"D": ([(0.5, DEEP)], [(0.99, 5)]), "R": ([(0.52, 300), (0.51, DEEP)], [(0.99, 5)])}  # 0.98 x300, then 0.99
+
+
+def test_extra_tier_buys_only_edge_0015_levels():
+    # core cash used up (0.5 above 50k); 0.02-edge level (300 pairs) may use the extra tier, the 0.01 level may not
+    fake = FakeClient({"Big edge": EDGE_02_DEEP}, balance=50_000.5)
+    r = make_runner(fake, extra=True)
+    r.poll()
+    assert len(r.sent) == 1
+    legs = r.sent[0][1]["legs"]
+    assert legs[0]["quantity"] == 300
+    assert sum(l["price"] for l in legs) <= 1 - 0.015 + 1e-9
+
+
+def test_extra_tier_not_for_small_edges():
+    fake = FakeClient({"Small edge": EDGE_01}, balance=50_000.5)
+    r = make_runner(fake, extra=True)
+    r.poll()
+    assert r.sent == []
+
+
+def test_extra_tier_respects_hard_reserve():
+    fake = FakeClient({"Big edge": EDGE_02}, balance=1_500)       # 500 above the hard reserve
+    r = make_runner(fake, extra=True)
+    r.poll()
+    legs = r.sent[0][1]["legs"]
+    assert legs[0]["quantity"] * sum(l["price"] for l in legs) <= 500 + 1e-6
+
+
+def test_extra_tier_disabled_means_drain():
+    fake = FakeClient({"Big edge": EDGE_02}, balance=50_000.5)
+    r = make_runner(fake, extra=False)
+    r.poll()
+    assert r.sent == []
 
 
 def test_exits_run_best_price_first():

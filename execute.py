@@ -68,8 +68,8 @@ class Runner:
         self.c, self.live, self.max_baskets = client, live, max_baskets
         self.run_id = dt.datetime.now().strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6]
         self.attempt = 0
-        self.touched = set()
-        self._cash = None          # cash above reserve, read once per poll; cleared after every order       # exchanges this run sent orders to (cancelled on shutdown)
+        self.touched = set()       # exchanges this run sent orders to (cancelled on shutdown)
+        self._cash = None          # cash above reserve, read once per poll; cleared after every order
         STATE_DIR.mkdir(exist_ok=True)
         t = self.c.get(f"/tournaments/{config.TOURNAMENT_SLUG}")
         self.tour = {"id": t["id"], "slug": t["slug"]}
@@ -165,7 +165,7 @@ class Runner:
                 continue
             if tried >= config.MAX_ENTRIES_PER_POLL:
                 break
-            if self.cash_room() < config.ROTATE_TRIGGER_CASH:   # out of budget: no book reads needed
+            if self.out_of_budget(self.top_edge(q, b)):        # out of budget: no book reads needed
                 blocked.append(b)
                 continue
             tried += 1
@@ -191,11 +191,26 @@ class Runner:
         bids = [q.get(e, {}).get("bestBid") for e in b.ex]           # YES bids -> NO asks
         return None if None in bids else 1.0 - sum(1 - x for x in bids)
 
-    def cash_room(self):
-        """Cash above the reserve. One balance read per poll; any order clears the cache."""
+    def cached_balance(self):
+        """Account cash. One balance read per poll; any order clears the cache."""
         if self._cash is None:
-            self._cash = self.balance() - config.RESERVE
+            self._cash = self.balance()
         return self._cash
+
+    def cash_room(self):
+        """Core budget: cash above RESERVE (usable for any edge >= MIN_EDGE)."""
+        return self.cached_balance() - config.RESERVE
+
+    def extra_room(self):
+        """Extra budget: cash above HARD_RESERVE, usable only for edges >= EXTRA_MIN_EDGE (option B)."""
+        return self.cached_balance() - config.HARD_RESERVE if config.EXTRA_CAPITAL_ENABLED else float("-inf")
+
+    def out_of_budget(self, edge):
+        """True if neither budget can pay for an entry at this (top-of-book) edge."""
+        if self.cash_room() >= config.ROTATE_TRIGGER_CASH:
+            return False
+        return not (edge is not None and edge >= config.EXTRA_MIN_EDGE - 1e-9
+                    and self.extra_room() >= config.ROTATE_TRIGGER_CASH)
 
     def sellers(self, q, held, b, floor):
         """Held races (other than b) whose best NO bids sum to >= floor, from the bulk quotes."""
@@ -305,8 +320,15 @@ class Basket:
             print(f"  {self.name}: skip, holds YES shares (a NO buy would net against them)")
             return None
         race_room = float("inf") if config.PER_RACE_CAP is None else config.PER_RACE_CAP - race_cost
-        cash = float("inf") if ignore_cash else self.r.cash_room()
         trigger = config.ROTATE_TRIGGER_CASH if min_cash is None else min_cash
+        cash = float("inf") if ignore_cash else self.r.cash_room()
+        if cash < trigger and not ignore_cash:
+            # option B: below the 50k reserve, only book levels with edge >= EXTRA_MIN_EDGE may be bought,
+            # paid from the extra tier (cash above HARD_RESERVE)
+            top = 1.0 - sum(lad[0][0] for lad in ladders)
+            if top >= config.EXTRA_MIN_EDGE - 1e-9 and self.r.extra_room() >= trigger:
+                edge = max(edge, config.EXTRA_MIN_EDGE)
+                cash = self.r.extra_room()
         if cash < trigger and race_room > cash:
             self.cash_blocked = True          # reported once per poll, in Runner.poll
             return None
@@ -324,6 +346,9 @@ class Basket:
             print(f"  {self.name}: skip, on-tick limits {limits} leave edge below {edge}")
             return None
         limits = widen_limits(limits, 1.0 - edge, config.TICK, up=True)
+        # budget check at the worst case (every share at its limit), so slack can never overspend
+        if max_cost != float("inf"):
+            q = min(q, math.floor(max_cost / sum(limits) + 1e-9))
         # if only the most expensive leg fills, the worst-case loss is q * max(limits)
         if config.MAX_UNHEDGED_EXPOSURE is not None:
             q = min(q, math.floor(config.MAX_UNHEDGED_EXPOSURE / max(limits)))

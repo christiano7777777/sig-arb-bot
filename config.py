@@ -29,7 +29,14 @@ TRADE_AT_ZERO_EDGE = False  # scan.py only
 # --- Capital (user, 2026-10-04) ---
 # The arb strategy may use only the cash above RESERVE (initial 100,000 -> 50,000 for this strategy).
 # The budget is read from the live balance before every entry, so exits automatically free it again.
-RESERVE = 50_000             # SUSQies never touched
+RESERVE = 50_000             # core budget = cash above this, for any edge >= MIN_EDGE
+# Option B (user, 2026-10-04): the other 50k is used too, but only for book levels with edge >= EXTRA_MIN_EDGE,
+# so each extra trade pays for an early exit later. To drain back to 50% before the stat-arb starts,
+# set EXTRA_CAPITAL_ENABLED = False: the bot stops buying below RESERVE and gets cash back only from
+# exits at >= 1.000 (free). HARD_RESERVE stays untouched so the unequal-fill fix always has cash.
+EXTRA_CAPITAL_ENABLED = True
+EXTRA_MIN_EDGE = 0.015
+HARD_RESERVE = 1_000
 PER_RACE_CAP = None          # no per-race cap (user, 2026-10-04: higher edge gets priority instead)
 MAX_UNHEDGED_EXPOSURE = 500  # worst-case SUSQies on an unpaired leg per attempt (~1% of strategy capital)
 

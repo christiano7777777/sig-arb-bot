@@ -122,7 +122,9 @@ function render(d) {
   document.getElementById("cards").innerHTML =
     card("Value at settlement", fmt(d.value_at_settlement), `${pnl >= 0 ? "+" : ""}${fmt(pnl)} vs ${fmt(d.initial, 0)}`, pnl >= 0 ? "pos" : "neg") +
     card("Pairs held", fmt(d.pairs, 0), `${d.races} races · cost ${fmt(d.cost_basis)}`) +
-    card("Cash above reserve", fmt(d.cash - d.reserve), `cash ${fmt(d.cash)}`) +
+    card("Cash", fmt(d.cash), d.extra_enabled
+      ? `${fmt(Math.max(d.cash - d.reserve, 0))} for any edge · ${fmt(Math.max(d.cash - d.hard_reserve, 0))} for edge ≥ ${d.extra_min_edge}`
+      : `${fmt(d.cash - d.reserve)} above ${fmt(d.reserve, 0)} reserve`) +
     card("Mark-to-market", fmt(d.mark_to_market), `${mtm >= 0 ? "+" : ""}${fmt(mtm)} at current prices`, mtm >= 0 ? "pos" : "neg");
 
   document.getElementById("warnings").innerHTML = (d.warnings && d.warnings.length)
