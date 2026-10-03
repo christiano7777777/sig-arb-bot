@@ -58,7 +58,10 @@ def build(c):
     rows.sort(key=lambda r: (r["current_edge"] is None, r["current_edge"] if r["current_edge"] is not None else 9))
 
     total_pairs = sum(r["pairs"] for r in rows)
+    activity, recent = trade_activity(c)
     return {
+        "activity": activity,
+        "recent": recent,
         "updated": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "cash": round(cash, 2),
         "reserve": config.RESERVE,
@@ -71,6 +74,78 @@ def build(c):
         "warnings": warnings,
         "rows": rows,
     }
+
+
+CACHE = Path(__file__).resolve().parents[1] / "state" / "trades_cache.json"
+WINDOWS_H = (1, 6, 24)
+
+
+def fetch_trades(c, max_pages=15):
+    """Trade legs from the last 24 h. Trades already seen are cached in state/, so after the first
+    call only the newest page is read (one API read)."""
+    try:
+        cache = json.loads(CACHE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        cache = {}
+    since = datetime.now(timezone.utc).timestamp() - 24 * 3600
+    cursor = None
+    for _ in range(max_pages):
+        r = c.get(f"/tournaments/{config.TOURNAMENT_SLUG}/portfolio/transactions", limit=200, cursor=cursor)
+        page = [t for t in r.get("data", []) if t.get("event_type") == "trade"]
+        new = [t for t in page if t["event_id"] not in cache]
+        for t in new:
+            cache[t["event_id"]] = {k: t[k] for k in ("createdAt", "orderType", "quantity", "price", "marketTitle")}
+        oldest = min((datetime.fromisoformat(t["createdAt"].replace("Z", "+00:00")).timestamp() for t in page),
+                     default=0)
+        pg = r.get("pagination", {})
+        if len(new) < len(page) or oldest < since or not pg.get("hasMore"):
+            break                      # reached trades we already have, or older than 24 h
+        cursor = pg["nextCursor"]
+    cache = {k: v for k, v in cache.items()
+             if datetime.fromisoformat(v["createdAt"].replace("Z", "+00:00")).timestamp() >= since}
+    CACHE.parent.mkdir(exist_ok=True)
+    CACHE.write_text(json.dumps(cache), encoding="utf-8")
+    return list(cache.values())
+
+
+def trade_activity(c):
+    """Pair the legs (same race, side of trade and size, within 5 s), then count buys, exits
+    (sold at a NO-bid sum >= 1) and swap sales (sold below 1 to fund a bigger edge)."""
+    legs = []
+    for t in fetch_trades(c):
+        g = TITLE.match(t["marketTitle"].strip())
+        legs.append({"ts": datetime.fromisoformat(t["createdAt"].replace("Z", "+00:00")),
+                     "act": t["orderType"], "race": g.group(2) if g else t["marketTitle"],
+                     "party": g.group(1) if g else "", "qty": abs(t["quantity"]), "px": t["price"]})
+    legs.sort(key=lambda x: x["ts"])
+    pairs, used = [], set()
+    for i, a in enumerate(legs):
+        if i in used:
+            continue
+        for j in range(i + 1, min(i + 8, len(legs))):
+            b = legs[j]
+            if (j not in used and b["race"] == a["race"] and b["act"] == a["act"] and b["qty"] == a["qty"]
+                    and b["party"] != a["party"] and (b["ts"] - a["ts"]).total_seconds() <= 5):
+                s = a["px"] + b["px"]
+                kind = "buy" if a["act"] == "BUY" else ("exit" if s >= 1 - 1e-9 else "swap")
+                pairs.append({"ts": a["ts"], "kind": kind, "race": a["race"], "qty": a["qty"], "sum": s})
+                used |= {i, j}
+                break
+    now = datetime.now(timezone.utc)
+    history_h = (now - legs[0]["ts"]).total_seconds() / 3600 if legs else 0
+    activity = {"history_hours": round(history_h, 2)}
+    for h in WINDOWS_H:
+        span = max(min(h, history_h), 1 / 60)          # divide by the time actually covered
+        recent_pairs = [p for p in pairs if (now - p["ts"]).total_seconds() <= h * 3600]
+        activity[f"{h}h"] = {k: {"orders": sum(p["kind"] == k for p in recent_pairs),
+                                 "pairs": sum(p["qty"] for p in recent_pairs if p["kind"] == k),
+                                 "per_hour": round(sum(p["kind"] == k for p in recent_pairs) / span, 2)}
+                             for k in ("exit", "swap", "buy")}
+        activity[f"{h}h"]["covered_hours"] = round(span, 2)
+    activity["one_legged_legs_24h"] = len(legs) - 2 * len(pairs)
+    recent = [{"ts": p["ts"].isoformat(timespec="seconds"), "kind": p["kind"], "race": p["race"],
+               "pairs": p["qty"], "price": round(p["sum"], 4)} for p in reversed(pairs[-25:])]
+    return activity, recent
 
 
 if __name__ == "__main__":

@@ -38,6 +38,9 @@
   .edge { font-weight: 650; }
   .e0 { color: var(--good); } .e1 { color: var(--warn); } .e2 { color: var(--muted); }
   .note { color: var(--muted); font-size: 12px; margin-top: 12px; }
+  h2 { font-size: 15px; margin: 20px 0 8px; }
+  .k-exit { color: var(--good); font-weight: 600; } .k-swap { color: var(--accent); font-weight: 600; }
+  .k-buy { color: var(--text); }
 </style>
 </head>
 <body>
@@ -46,6 +49,14 @@
   <div class="sub" id="status">Loading…</div>
   <div id="warnings"></div>
   <div class="cards" id="cards"></div>
+  <h2>Trading activity</h2>
+  <div class="tablewrap" style="margin-bottom:18px">
+    <table>
+      <thead><tr><th>Window</th><th>Exits (S ≥ 1)</th><th>Exits / h</th><th>Swap sales</th><th>Swaps / h</th><th>Buys</th><th>Buys / h</th></tr></thead>
+      <tbody id="activity"></tbody>
+    </table>
+  </div>
+  <h2>Pairs held</h2>
   <div class="tablewrap">
     <table>
       <thead><tr>
@@ -55,8 +66,17 @@
       <tbody id="rows"></tbody>
     </table>
   </div>
+  <h2>Recent trades</h2>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>Time</th><th>Type</th><th>Race</th><th>Pairs</th><th>Pair price</th></tr></thead>
+      <tbody id="recent"></tbody>
+    </table>
+  </div>
   <p class="note">
-    Sorted by current edge, lowest first: the pairs that are cheapest to give up (sold first in a swap).
+    Exit = both NO legs sold at a sum ≥ 1.000. Swap sale = held pairs sold below 1 to fund a bigger edge.
+    Rates are orders per hour over the time each window actually covers.
+    Pairs table: sorted by current edge, lowest first: the pairs that are cheapest to give up (sold first in a swap).
     S = sum of the two NO bids; at S ≥ 1.000 the bot sells immediately. Value assumes every NO+NO pair pays 1.
     Data refreshes every minute (GitHub's file cache can add up to ~5 minutes).
   </p>
@@ -86,6 +106,18 @@ function render(d) {
 
   document.getElementById("warnings").innerHTML = (d.warnings && d.warnings.length)
     ? `<div class="warn"><b>Unequal legs:</b> ${d.warnings.map(esc).join("; ")}</div>` : "";
+
+  const a = d.activity || {};
+  document.getElementById("activity").innerHTML = ["1h", "6h", "24h"].filter(w => a[w]).map(w => {
+    const x = a[w], cov = x.covered_hours < parseInt(w) ? ` <span class="n">(${fmt(x.covered_hours, 1)} h of data)</span>` : "";
+    return `<tr><td>Last ${w}${cov}</td>
+      <td>${x.exit.orders} <span class="n">(${fmt(x.exit.pairs, 0)} pairs)</span></td><td class="k-exit">${fmt(x.exit.per_hour, 1)}</td>
+      <td>${x.swap.orders} <span class="n">(${fmt(x.swap.pairs, 0)} pairs)</span></td><td class="k-swap">${fmt(x.swap.per_hour, 1)}</td>
+      <td>${x.buy.orders} <span class="n">(${fmt(x.buy.pairs, 0)} pairs)</span></td><td>${fmt(x.buy.per_hour, 1)}</td></tr>`;
+  }).join("");
+  document.getElementById("recent").innerHTML = (d.recent || []).map(t =>
+    `<tr><td>${new Date(t.ts).toLocaleTimeString()}</td><td class="k-${t.kind}">${t.kind}</td>
+      <td>${esc(t.race)}</td><td>${fmt(t.pairs, 0)}</td><td>${fmt(t.price, 4)}</td></tr>`).join("");
 
   document.getElementById("rows").innerHTML = d.rows.map(r => {
     const e = r.current_edge;
