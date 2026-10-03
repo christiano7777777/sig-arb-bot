@@ -391,6 +391,20 @@ def test_exit_first_and_entries_capped_per_poll():
     assert actions == ["sell"] + ["buy"] * 4
 
 
+def test_out_of_budget_poll_reads_no_books():
+    # out of cash, many entry signals, no held race can fund a swap -> only the cheap reads
+    races = {f"Race {i}": EDGE_01 for i in range(6)}
+    races["Held race"] = SELLER_0990                        # bids 0.990: cannot fund a 0.990 pair
+    fake = FakeClient(races, balance=50_000.5)
+    fake.held = held_pairs(fake, "Held race", 100)
+    r = make_runner(fake)
+    fake.gets.clear()
+    r.poll()
+    assert r.sent == []
+    assert not any(g.endswith("/orderbook") for g in fake.gets), fake.gets
+    assert len(fake.gets) <= 3, fake.gets                  # quotes + positions + one balance read
+
+
 def test_exits_run_best_price_first():
     races = {"Aaa race": {"D": ([(0.875, 10)], [(0.875, 50)]), "R": ([(0.12, 10)], [(0.125, 50)])},   # S = 1.000
              "Zzz race": {"D": ([(0.875, 10)], [(0.86, 50)]), "R": ([(0.12, 10)], [(0.125, 50)])}}    # S = 1.015

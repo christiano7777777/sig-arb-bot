@@ -68,7 +68,8 @@ class Runner:
         self.c, self.live, self.max_baskets = client, live, max_baskets
         self.run_id = dt.datetime.now().strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6]
         self.attempt = 0
-        self.touched = set()       # exchanges this run sent orders to (cancelled on shutdown)
+        self.touched = set()
+        self._cash = None          # cash above reserve, read once per poll; cleared after every order       # exchanges this run sent orders to (cancelled on shutdown)
         STATE_DIR.mkdir(exist_ok=True)
         t = self.c.get(f"/tournaments/{config.TOURNAMENT_SLUG}")
         self.tour = {"id": t["id"], "slug": t["slug"]}
@@ -128,6 +129,7 @@ class Runner:
 
     # ---- one poll --------------------------------------------------------
     def poll(self):
+        self._cash = None
         q = self.quotes()
         held = self.positions()
         entries, exits = [], []
@@ -163,6 +165,9 @@ class Runner:
                 continue
             if tried >= config.MAX_ENTRIES_PER_POLL:
                 break
+            if self.cash_room() < config.ROTATE_TRIGGER_CASH:   # out of budget: no book reads needed
+                blocked.append(b)
+                continue
             tried += 1
             b.try_once()
             if b.cash_blocked:
@@ -177,8 +182,8 @@ class Runner:
                     return
                 edge = self.top_edge(q, b)
                 if edge is not None and edge >= config.ROTATE_ENTRY_EDGE - 1e-9:
-                    done += 1
-                    self.rotate(b, q)
+                    if self.rotate(b, q, held):
+                        done += 1
 
     @staticmethod
     def top_edge(q, b):
@@ -187,23 +192,14 @@ class Runner:
         return None if None in bids else 1.0 - sum(1 - x for x in bids)
 
     def cash_room(self):
-        return self.balance() - config.RESERVE
+        """Cash above the reserve. One balance read per poll; any order clears the cache."""
+        if self._cash is None:
+            self._cash = self.balance() - config.RESERVE
+        return self._cash
 
-    def rotate(self, b, q):
-        """Fund race b (edge >= ROTATE_ENTRY_EDGE) by selling held pairs whose current NO-bid sum
-        beats b's worst-case ask sum by >= ROTATE_MIN_GAIN."""
-        p = b.plan(b.books(), min_edge=config.ROTATE_ENTRY_EDGE, ignore_cash=True)
-        if p is None:
-            return
-        qn, _, res_n, _ = p
-        # price of a new pair at the book levels it would take (before limit slack is added)
-        new_sum = sum(ceil_to_tick(x, config.TICK) for x in res_n["worst_prices"])
-        sell_floor = new_sum + config.ROTATE_MIN_GAIN             # held pairs must sell at >= this
-        need = qn * res_n["avg_cost"] - max(0.0, self.cash_room())
-        if need < 1:
-            return
-        held = self.positions()
-        cands = []
+    def sellers(self, q, held, b, floor):
+        """Held races (other than b) whose best NO bids sum to >= floor, from the bulk quotes."""
+        out = []
         for a in self.baskets:
             if a is b:
                 continue
@@ -211,12 +207,33 @@ class Runner:
             asks = [q.get(e, {}).get("bestAsk") for e in a.ex]
             if pairs >= 1 and None not in asks:
                 s = sum(1 - x for x in asks)
-                if s >= sell_floor - 1e-9:
-                    cands.append((s, a))
+                if s >= floor - 1e-9:
+                    out.append((s, a))
+        return out
+
+    def rotate(self, b, q, held):
+        """Fund race b (edge >= ROTATE_ENTRY_EDGE) by selling held pairs whose current NO-bid sum
+        beats b's ask sum by >= ROTATE_MIN_GAIN. Returns True if it did any book reads."""
+        # pre-check from the bulk quotes: the cheapest new pair is 1 - top edge, so no held race
+        # bidding below that + ROTATE_MIN_GAIN can ever fund it. Then no book is read at all.
+        c_top = 1.0 - self.top_edge(q, b)
+        if not self.sellers(q, held, b, c_top + config.ROTATE_MIN_GAIN):
+            return False
+        p = b.plan(b.books(), min_edge=config.ROTATE_ENTRY_EDGE, ignore_cash=True)
+        if p is None:
+            return True
+        qn, _, res_n, _ = p
+        # price of a new pair at the book levels it would take (before limit slack is added)
+        new_sum = sum(ceil_to_tick(x, config.TICK) for x in res_n["worst_prices"])
+        sell_floor = new_sum + config.ROTATE_MIN_GAIN             # held pairs must sell at >= this
+        need = qn * res_n["avg_cost"] - max(0.0, self.cash_room())
+        if need < 1:
+            return True
+        cands = self.sellers(q, held, b, sell_floor)
         if not cands:
             print(f"  ROTATE {b.name} (new pair <= {new_sum:.3f}): needs ~{need:.0f}, "
                   f"no held race bids >= {sell_floor:.3f}")
-            return
+            return True
         print(f"  ROTATE {b.name} (new pair <= {new_sum:.3f}): needs ~{need:.0f}; "
               f"sellers {[f'{a.name} {s:.3f}' for s, a in cands]}")
         sold_min = None
@@ -234,10 +251,11 @@ class Runner:
             need -= qs * res_s["avg_proceeds"]
             sold_min = sum(lim_s) if sold_min is None else min(sold_min, sum(lim_s))
         if sold_min is None:
-            return
+            return True
         # buy only at a price that keeps the swap gain, even if the book moved meanwhile
         # min_cash=1: spend whatever the sales freed, even if it is under the "out of budget" trigger
         b.try_once(min_edge=max(config.ROTATE_ENTRY_EDGE, 1.0 - (sold_min - config.ROTATE_MIN_GAIN)), min_cash=1)
+        return True
 
 
 class Basket:
@@ -375,6 +393,7 @@ class Basket:
                          for e, px in zip(self.ex, limits)]}
         try:
             r = self.r.order("/orders/multi-leg", body, f"{self.name}:pair-{action}")
+            self.r._cash = None
         except ApiError as err:
             # outcome unknown even after the documented retries: stop, cancel, let the human look
             raise Halt(f"{self.name}: pair {action} failed: {err}. Check positions by hand.")
@@ -403,7 +422,9 @@ class Basket:
         body = {"idempotencyKey": self.r.next_key(tag), "exchangeId": self.ex[k], "side": "no",
                 "action": action, "quantity": int(qty), "price": price,
                 "expirationDate": now_plus(config.ORDER_EXPIRY_S), "tournamentId": self.r.tour["id"]}
-        return self.r.order("/orders", body, f"{self.name}:{tag}")
+        r = self.r.order("/orders", body, f"{self.name}:{tag}")
+        self.r._cash = None
+        return r
 
     # ---- unequal legs ----------------------------------------------------
     def fix_imbalance(self, held, action, limits, exit_target):
