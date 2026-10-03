@@ -50,7 +50,7 @@ EXIT_MIN_SUM = 1.000
 # Swaps may sell below the held pair's cost (user, 2026-10-04); plain exits never do.
 ROTATE_ENABLED = True
 ROTATE_ENTRY_EDGE = 0.01
-ROTATE_MIN_GAIN = 0.005
+ROTATE_MIN_GAIN = 0.001   # user, 2026-10-04 (on the 0.005 tick this equals any gain > 0)
 ROTATE_TRIGGER_CASH = 50     # "out of budget" = less than this above the reserve
 
 # Exits are immediate (user, 2026-10-04): each poll runs ALL exits first, then only a few entries and
