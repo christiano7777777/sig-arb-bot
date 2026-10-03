@@ -34,7 +34,8 @@ class ApiError(Exception):
 
 class SusqClient:
     def __init__(self, base_url=BASE_URL):
-        self._key = os.environ.get("SUSQ_API_KEY")
+        # strip whitespace and an invisible byte-order mark (PowerShell pipes add one)
+        self._key = (os.environ.get("SUSQ_API_KEY") or "").strip().lstrip("﻿").strip()
         if not self._key:
             raise SystemExit("SUSQ_API_KEY is not set. See .env.example.")
         self.base_url = base_url.rstrip("/")

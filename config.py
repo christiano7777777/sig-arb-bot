@@ -53,6 +53,11 @@ ROTATE_ENTRY_EDGE = 0.01
 ROTATE_MIN_GAIN = 0.005
 ROTATE_TRIGGER_CASH = 50     # "out of budget" = less than this above the reserve
 
+# Exits are immediate (user, 2026-10-04): each poll runs ALL exits first, then only a few entries and
+# swaps, so the next exit check is never more than a few seconds away.
+MAX_ENTRIES_PER_POLL = 4
+MAX_ROTATIONS_PER_POLL = 2
+
 # Execution
 ORDER_EXPIRY_S = 10          # short expiry on every order = home-made IOC (API has no IOC flag)
 POLL_INTERVAL_S = 5          # one poll = 3 bulk price reads + 1 positions read

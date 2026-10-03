@@ -145,21 +145,39 @@ class Runner:
         print(f"{time.strftime('%H:%M:%S')}  {len(self.baskets)} races: "
               f"{len(entries)} entry signal(s) {[f'{b.name} {e:.3f}' for e, b in entries]}, "
               f"{len(exits)} exit signal(s) {[b.name for b in exits]}")
-        blocked = []
-        for b in exits + [b for _, b in entries if b not in exits]:
+        # 1) every exit, best price first: exits are never delayed by entry work
+        for b in exits:
             if STOP_FILE.exists():
                 return
+            b.try_once()
+        # 2) a few entries, highest edge first. Once one is out of budget, the rest are too
+        #    (cash does not grow during entries), so they go straight to the swap queue.
+        blocked, tried = [], 0
+        for _, b in entries:
+            if b in exits:
+                continue
+            if STOP_FILE.exists():
+                return
+            if blocked:
+                blocked.append(b)
+                continue
+            if tried >= config.MAX_ENTRIES_PER_POLL:
+                break
+            tried += 1
             b.try_once()
             if b.cash_blocked:
                 blocked.append(b)
         if blocked:
             print(f"  out of budget ({max(self.cash_room(), 0):.2f} above reserve) for {len(blocked)} race(s)")
+        # 3) a few swaps, highest edge first
         if config.ROTATE_ENABLED:
-            for b in blocked:                                        # still in edge order
-                if STOP_FILE.exists():
+            done = 0
+            for b in blocked:
+                if STOP_FILE.exists() or done >= config.MAX_ROTATIONS_PER_POLL:
                     return
                 edge = self.top_edge(q, b)
                 if edge is not None and edge >= config.ROTATE_ENTRY_EDGE - 1e-9:
+                    done += 1
                     self.rotate(b, q)
 
     @staticmethod

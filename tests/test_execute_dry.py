@@ -378,6 +378,19 @@ def test_plain_exit_never_below_cost():
     assert r.sent == []
 
 
+def test_exit_first_and_entries_capped_per_poll():
+    # 8 races with edges plus 1 held race at S = 1.000: the exit goes first, then only 4 entries
+    races = {f"Race {i}": {"D": ([(0.9, 100)], [(0.99, 5)]), "R": ([(0.12, 100)], [(0.99, 5)])} for i in range(8)}
+    races["Held race"] = {"D": ([(0.875, 10)], [(0.875, 50)]), "R": ([(0.12, 10)], [(0.125, 50)])}
+    fake = FakeClient(races)
+    fake.held = held_pairs(fake, "Held race", 100)
+    r = make_runner(fake)
+    config.MAX_ENTRIES_PER_POLL = 4
+    r.poll()
+    actions = [b["legs"][0]["action"] for _, b in r.sent]
+    assert actions == ["sell"] + ["buy"] * 4
+
+
 def test_exits_run_best_price_first():
     races = {"Aaa race": {"D": ([(0.875, 10)], [(0.875, 50)]), "R": ([(0.12, 10)], [(0.125, 50)])},   # S = 1.000
              "Zzz race": {"D": ([(0.875, 10)], [(0.86, 50)]), "R": ([(0.12, 10)], [(0.125, 50)])}}    # S = 1.015
