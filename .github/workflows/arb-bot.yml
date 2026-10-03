@@ -17,7 +17,7 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: read
+  contents: write   # the dashboard snapshot is pushed to the dashboard-data branch
   actions: write
 
 jobs:
@@ -38,10 +38,14 @@ jobs:
         env:
           SUSQ_API_KEY: ${{ secrets.SUSQ_API_KEY }}
           PYTHONIOENCODING: utf-8
+          GH_TOKEN: ${{ github.token }}
         run: |
           set +e
+          bash tools/push_snapshot.sh &        # dashboard data every 2 min (3 API reads each)
+          SNAP=$!
           python -u execute.py --live --max-runtime 20700 2>&1 | tee bot.log
           echo "code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+          kill $SNAP 2>/dev/null
           exit 0
 
       - name: Halted -> disable this workflow

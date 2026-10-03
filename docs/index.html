@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Arb Portfolio</title>
+<style>
+  :root {
+    --bg: #f7f7f5; --card: #ffffff; --text: #1d1d1f; --muted: #6b6b70; --line: #e4e4e0;
+    --good: #1a7f4b; --warn: #b26a00; --bad: #c0362c; --accent: #2f5bd3;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #121214; --card: #1c1c1f; --text: #ececee; --muted: #9a9aa2; --line: #2c2c31;
+            --good: #4cc38a; --warn: #f0a742; --bad: #ff6b5e; --accent: #7aa2ff; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 980px; margin: 0 auto; padding: 20px 16px 48px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 18px; }
+  .stale { color: var(--bad); font-weight: 600; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; margin-bottom: 18px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+  .card .k { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+  .card .v { font-size: 22px; font-weight: 650; font-variant-numeric: tabular-nums; margin-top: 2px; }
+  .card .n { color: var(--muted); font-size: 12px; margin-top: 2px; }
+  .pos { color: var(--good); } .neg { color: var(--bad); }
+  .warn { background: color-mix(in srgb, var(--bad) 12%, transparent); border: 1px solid var(--bad);
+          border-radius: 10px; padding: 10px 14px; margin-bottom: 16px; }
+  .tablewrap { overflow-x: auto; background: var(--card); border: 1px solid var(--line); border-radius: 10px; }
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  th, td { padding: 9px 12px; text-align: right; white-space: nowrap; border-bottom: 1px solid var(--line); }
+  th:first-child, td:first-child { text-align: left; }
+  th { font-size: 12px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .03em;
+       position: sticky; top: 0; background: var(--card); }
+  tr:last-child td { border-bottom: 0; }
+  .edge { font-weight: 650; }
+  .e0 { color: var(--good); } .e1 { color: var(--warn); } .e2 { color: var(--muted); }
+  .note { color: var(--muted); font-size: 12px; margin-top: 12px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>NO+NO arbitrage portfolio</h1>
+  <div class="sub" id="status">Loading…</div>
+  <div id="warnings"></div>
+  <div class="cards" id="cards"></div>
+  <div class="tablewrap">
+    <table>
+      <thead><tr>
+        <th>Race</th><th>Pairs</th><th>Avg cost</th><th>Sell now (S)</th>
+        <th>Current edge (1 − S)</th><th>Buy now</th><th>Locked</th>
+      </tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+  <p class="note">
+    Sorted by current edge, lowest first: the pairs that are cheapest to give up (sold first in a swap).
+    S = sum of the two NO bids; at S ≥ 1.000 the bot sells immediately. Value assumes every NO+NO pair pays 1.
+    Data refreshes every minute (GitHub's file cache can add up to ~5 minutes).
+  </p>
+</main>
+<script>
+const SRC = "https://raw.githubusercontent.com/christiano7777777/sig-arb-bot/dashboard-data/snapshot.json";
+const fmt = (x, d = 2) => x == null ? "–" : Number(x).toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+function card(k, v, n, cls = "") {
+  return `<div class="card"><div class="k">${k}</div><div class="v ${cls}">${v}</div>${n ? `<div class="n">${n}</div>` : ""}</div>`;
+}
+
+function render(d) {
+  const age = (Date.now() - new Date(d.updated).getTime()) / 60000;
+  const st = document.getElementById("status");
+  st.innerHTML = `Updated ${new Date(d.updated).toLocaleString()} (${age < 1 ? "just now" : Math.round(age) + " min ago"})`
+    + (age > 15 ? ` · <span class="stale">stale: is the bot running?</span>` : "");
+
+  const pnl = d.value_at_settlement - d.initial;
+  const mtm = d.mark_to_market - d.initial;
+  document.getElementById("cards").innerHTML =
+    card("Value at settlement", fmt(d.value_at_settlement), `${pnl >= 0 ? "+" : ""}${fmt(pnl)} vs ${fmt(d.initial, 0)}`, pnl >= 0 ? "pos" : "neg") +
+    card("Pairs held", fmt(d.pairs, 0), `${d.races} races · cost ${fmt(d.cost_basis)}`) +
+    card("Cash above reserve", fmt(d.cash - d.reserve), `cash ${fmt(d.cash)}`) +
+    card("Mark-to-market", fmt(d.mark_to_market), `${mtm >= 0 ? "+" : ""}${fmt(mtm)} at current prices`, mtm >= 0 ? "pos" : "neg");
+
+  document.getElementById("warnings").innerHTML = (d.warnings && d.warnings.length)
+    ? `<div class="warn"><b>Unequal legs:</b> ${d.warnings.map(esc).join("; ")}</div>` : "";
+
+  document.getElementById("rows").innerHTML = d.rows.map(r => {
+    const e = r.current_edge;
+    const cls = e == null ? "e2" : e <= 0.005 ? "e0" : e <= 0.02 ? "e1" : "e2";
+    return `<tr><td>${esc(r.race)}</td><td>${fmt(r.pairs, 0)}</td><td>${fmt(r.avg_cost, 4)}</td>
+      <td>${fmt(r.sell_sum, 3)}</td><td class="edge ${cls}">${fmt(e, 3)}</td>
+      <td>${fmt(r.buy_sum, 3)}</td><td>${fmt(r.locked)}</td></tr>`;
+  }).join("");
+}
+
+async function load() {
+  try {
+    const res = await fetch(SRC + "?t=" + Date.now(), { cache: "no-store" });
+    if (!res.ok) throw new Error(res.status);
+    render(await res.json());
+  } catch (e) {
+    document.getElementById("status").innerHTML = `<span class="stale">Could not load data (${esc(e.message)}). Retrying…</span>`;
+  }
+}
+load();
+setInterval(load, 60000);
+</script>
+</body>
+</html>
