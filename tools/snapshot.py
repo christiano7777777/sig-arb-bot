@@ -145,6 +145,9 @@ def trade_activity(c):
                                  "per_hour": round(sum(p["kind"] == k for p in recent_pairs) / span, 2)}
                              for k in ("exit", "swap", "buy")}
         activity[f"{h}h"]["covered_hours"] = round(span, 2)
+        b = [p for p in recent_pairs if p["kind"] == "buy"]
+        bq = sum(p["qty"] for p in b)
+        activity[f"{h}h"]["buy_edge"] = round(sum(p["qty"] * (1 - p["sum"]) for p in b) / bq, 4) if bq else None
     activity["one_legged_legs_24h"] = len(legs) - 2 * len(pairs)
     recent = [{"ts": p["ts"].isoformat(timespec="seconds"), "kind": p["kind"], "race": p["race"],
                "pairs": p["qty"], "price": round(p["sum"], 4)} for p in reversed(pairs[-25:])]

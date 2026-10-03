@@ -13,6 +13,10 @@ work=$(mktemp -d)
 if git clone -q --depth 1 -b dashboard-data "$remote" "$work/prev" 2>/dev/null; then
     cp "$work/prev/history.json" "$work/history.json" 2>/dev/null || true
 fi
+# fill in the curve before the first live point by replaying the trade history since the Cup began
+if python tools/backfill_history.py > "$work/backfill.json" 2>> snapshot.err; then
+    python tools/merge_history.py "$work/backfill.json" "$work/history.json" 2>> snapshot.err
+fi
 
 while true; do
     if python tools/snapshot.py > "$work/snapshot.json.tmp" 2>> snapshot.err; then
