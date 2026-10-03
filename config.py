@@ -49,7 +49,7 @@ EXIT_MIN_SUM = 1.000
 #   S - (ask sum of the new pair) >= ROTATE_MIN_GAIN      (net gain per pair swapped)
 # Swaps may sell below the held pair's cost (user, 2026-10-04); plain exits never do.
 ROTATE_ENABLED = True
-ROTATE_ENTRY_EDGE = 0.01
+ROTATE_ENTRY_EDGE = MIN_EDGE  # user, 2026-10-04: swap whenever the swap itself earns > 0
 ROTATE_MIN_GAIN = 0.001   # user, 2026-10-04 (on the 0.005 tick this equals any gain > 0)
 ROTATE_TRIGGER_CASH = 50     # "out of budget" = less than this above the reserve
 

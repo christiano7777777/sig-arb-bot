@@ -12,7 +12,7 @@ pays at least 1 at settlement (exactly 1 if either party wins, 2 if neither does
 |---|---|
 | Buy a pair | when `ask_NO(D) + ask_NO(R) <= 1 - 0.005` -> locked profit >= 0.005 per pair |
 | Sell a held pair | when `bid_NO(D) + bid_NO(R) >= 1` -> at least the settlement value, paid now |
-| Swap (rotation) | when out of capital: sell held pairs at `S`, buy a new pair at `C` (edge >= 0.01), only if `S - C >= 0.001` |
+| Swap (rotation) | when out of capital: sell held pairs at `S`, buy a new pair at `C`, whenever `S - C >= 0.001` |
 
 Order books are quoted in YES terms, so `ask_NO = 1 - bid_YES` and `bid_NO = 1 - ask_YES`.
 
