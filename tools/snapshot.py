@@ -54,6 +54,9 @@ def build(c):
             "current_edge": None if sell is None else round(1 - sell, 4),  # given up by selling now
             "buy_sum": buy,
             "locked": round(pairs - cost, 2),
+            # shares above the pair count (legs briefly unequal), valued at their own average cost
+            "unpaired_value": round(sum((max(-p["quantity"], 0) - pairs) * p["costBasis"] / max(-p["quantity"], 1)
+                                        for p in legs.values() if -p["quantity"] > pairs), 2),
         })
     rows.sort(key=lambda r: (r["current_edge"] is None, r["current_edge"] if r["current_edge"] is not None else 9))
 
@@ -72,7 +75,8 @@ def build(c):
         "pairs": total_pairs,
         "races": len(rows),
         "cost_basis": round(sum(p["costBasis"] for legs in races.values() for p in legs.values()), 2),
-        "value_at_settlement": round(cash + total_pairs, 2),          # every NO+NO pair pays 1
+        # every NO+NO pair pays 1; unpaired shares (legs briefly unequal) at their cost
+        "value_at_settlement": round(cash + total_pairs + sum(r["unpaired_value"] for r in rows), 2),
         "mark_to_market": round(cash + pos["summary"]["totalMarketValue"], 2),
         "warnings": warnings,
         "rows": rows,

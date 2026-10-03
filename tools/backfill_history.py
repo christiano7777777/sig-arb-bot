@@ -1,6 +1,7 @@
 """Rebuild the equity curve since the start of the Cup, from the trade history (read-only).
 
-value at settlement(t) = cash(t) + pairs held(t)   (every NO+NO pair pays 1)
+value at settlement(t) = cash(t) + pairs held(t) + unpaired NO shares at their average cost
+(every NO+NO pair pays 1; a leg waiting for its other half is counted at what it cost, not at 0)
 cash is replayed from the initial balance using every trade's quantity x price; the result is
 verified against the dashboard's recorded values (matched to 0.01 at 7 points on 2026-10-04).
 The trade list can lag live trading by minutes, so only history older than the live record is used.
@@ -43,6 +44,7 @@ def build(c):
 
     cash = t["initialBalance"]
     no = defaultdict(float)                     # (race, party) -> NO shares
+    cost = defaultdict(float)                   # (race, party) -> cost of those shares
     races = set()
     points, last_emit = [], None
     for r in trades:
@@ -51,15 +53,27 @@ def build(c):
         races.add(race)
         q = abs(r["quantity"])
         # quantity is negative for NO; price is the NO price for NO trades
+        k = (race, party)
         if r["orderType"] == "BUY":
             cash -= q * r["price"]
-            no[(race, party)] += q
+            no[k] += q
+            cost[k] += q * r["price"]
         else:
             cash += q * r["price"]
-            no[(race, party)] -= q
+            if no[k] > 0:
+                cost[k] -= cost[k] * min(q, no[k]) / no[k]      # average-cost removal
+            no[k] -= q
         now = ts(r["createdAt"])
-        pairs = sum(min(no[(rc, "Democratic")], no[(rc, "Republican")]) for rc in races)
-        point = {"t": now.isoformat(timespec="seconds"), "settle": round(cash + pairs, 2)}
+        value = cash
+        for rc in races:
+            d, rp = no[(rc, "Democratic")], no[(rc, "Republican")]
+            pairs = max(0.0, min(d, rp))
+            value += pairs
+            for leg, n in ((rc, "Democratic"), (rc, "Republican")):
+                extra = no[(leg, n)] - pairs
+                if extra > 1e-9 and no[(leg, n)] > 0:
+                    value += extra * cost[(leg, n)] / no[(leg, n)]
+        point = {"t": now.isoformat(timespec="seconds"), "settle": round(value, 2)}
         # one point per second; a later leg in the same second replaces the earlier one
         if last_emit == point["t"]:
             points[-1] = point

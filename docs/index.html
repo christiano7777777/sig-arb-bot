@@ -243,10 +243,13 @@ function drawChart() {
   const lastOf = key => { for (let i = pts.length - 1; i >= 0; i--) if (pts[i][key] != null) return [i, pts[i][key]]; return null; };
   for (const s of SERIES) {
     // a missing value (no mark-to-market before live recording began) breaks the line
-    let d = "", pen = false;
+    // step line: the value holds until the next recorded change (no slopes across quiet periods)
+    let d = "", pen = false, prevY = null;
     pts.forEach((p, i) => {
       if (p[s.key] == null) { pen = false; return; }
-      d += `${pen ? "L" : "M"}${x(ts[i]).toFixed(1)},${y(p[s.key]).toFixed(1)}`; pen = true;
+      const xi = x(ts[i]).toFixed(1), yi = y(p[s.key]).toFixed(1);
+      d += pen ? `L${xi},${prevY}L${xi},${yi}` : `M${xi},${yi}`;
+      pen = true; prevY = yi;
     });
     if (!d) continue;
     g += `<path d="${d}" fill="none" stroke="${s.color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
