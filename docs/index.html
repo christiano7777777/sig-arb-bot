@@ -39,6 +39,19 @@
   .e0 { color: var(--good); } .e1 { color: var(--warn); } .e2 { color: var(--muted); }
   .note { color: var(--muted); font-size: 12px; margin-top: 12px; }
   h2 { font-size: 15px; margin: 20px 0 8px; }
+  :root { --s1: #2a78d6; --s2: #eb6834; --grid: #ececea; }
+  @media (prefers-color-scheme: dark) { :root { --s1: #3987e5; --s2: #d95926; --grid: #2a2a2e; } }
+  .chartcard { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px 6px; }
+  .legend { display: flex; gap: 18px; flex-wrap: wrap; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+  .legend i { display: inline-block; width: 14px; height: 2px; vertical-align: middle; margin-right: 6px; }
+  .legend b { color: var(--text); font-variant-numeric: tabular-nums; }
+  .chartwrap { position: relative; }
+  #chart { width: 100%; height: 260px; display: block; touch-action: pan-y; }
+  #chart text { fill: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+  .tip { position: absolute; top: 4px; pointer-events: none; background: var(--card); border: 1px solid var(--line);
+         border-radius: 8px; padding: 6px 9px; font-size: 12px; box-shadow: 0 2px 8px rgba(0,0,0,.12);
+         font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .tip i { display: inline-block; width: 10px; height: 2px; vertical-align: middle; margin-right: 5px; }
   .k-exit { color: var(--good); font-weight: 600; } .k-swap { color: var(--accent); font-weight: 600; }
   .k-buy { color: var(--text); }
 </style>
@@ -49,6 +62,14 @@
   <div class="sub" id="status">Loading…</div>
   <div id="warnings"></div>
   <div class="cards" id="cards"></div>
+  <h2>Equity curve</h2>
+  <div class="chartcard">
+    <div class="legend" id="legend"></div>
+    <div class="chartwrap" id="chartwrap">
+      <svg id="chart" role="img" aria-label="Equity curve: portfolio value over time"></svg>
+      <div class="tip" id="tip" hidden></div>
+    </div>
+  </div>
   <h2>Trading activity</h2>
   <div class="tablewrap" style="margin-bottom:18px">
     <table>
@@ -128,14 +149,104 @@ function render(d) {
   }).join("");
 }
 
+// ---------- equity curve (inline SVG, one y-axis: both series are SUSQies) ----------
+const HIST = SRC.replace("snapshot.json", "history.json");
+let hist = [], initial = 100000;
+const SERIES = [
+  { key: "settle", name: "Value at settlement (every pair pays 1)", color: "var(--s1)" },
+  { key: "mtm", name: "Mark-to-market (current prices)", color: "var(--s2)" },
+];
+
+function niceTicks(lo, hi, n = 4) {
+  const span = hi - lo || 1, step0 = span / n, mag = 10 ** Math.floor(Math.log10(step0));
+  const step = [1, 2, 2.5, 5, 10].map(m => m * mag).find(s => s >= step0);
+  const out = [];
+  for (let v = Math.ceil(lo / step) * step; v <= hi + 1e-9; v += step) out.push(v);
+  return out;
+}
+
+function drawChart() {
+  const svg = document.getElementById("chart");
+  const W = svg.clientWidth || 600, H = 260, L = 58, R = 92, T = 10, B = 26;
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  if (hist.length < 2) {
+    svg.innerHTML = `<text x="${W / 2}" y="${H / 2}" text-anchor="middle">Collecting data: the curve appears after a few snapshots (one every 2 min).</text>`;
+    document.getElementById("legend").innerHTML = "";
+    return;
+  }
+  const ts = hist.map(p => new Date(p.t).getTime());
+  const vals = hist.flatMap(p => [p.settle, p.mtm]).concat([initial]);
+  let lo = Math.min(...vals), hi = Math.max(...vals);
+  const pad = (hi - lo) * 0.08 || 50; lo -= pad; hi += pad;
+  const t0 = ts[0], t1 = ts[ts.length - 1];
+  const x = t => L + (W - L - R) * (t - t0) / ((t1 - t0) || 1);
+  const y = v => T + (H - T - B) * (1 - (v - lo) / (hi - lo));
+
+  let g = "";
+  for (const v of niceTicks(lo, hi)) {
+    g += `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="var(--grid)" stroke-width="1"/>`
+       + `<text x="${L - 6}" y="${y(v) + 4}" text-anchor="end">${fmt(v, 0)}</text>`;
+  }
+  const span = t1 - t0;
+  for (let k = 0; k <= 3; k++) {
+    const t = t0 + span * k / 3, d = new Date(t);
+    const lab = span > 36 * 3600e3 ? d.toLocaleDateString([], { month: "short", day: "numeric" })
+                                   : d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    g += `<text x="${x(t)}" y="${H - 6}" text-anchor="${k === 0 ? "start" : k === 3 ? "end" : "middle"}">${lab}</text>`;
+  }
+  // starting balance reference
+  g += `<line x1="${L}" x2="${W - R}" y1="${y(initial)}" y2="${y(initial)}" stroke="var(--muted)" stroke-width="1" stroke-dasharray="4 4"/>`
+     + `<text x="${W - R + 6}" y="${y(initial) + 4}">start ${fmt(initial, 0)}</text>`;
+  for (const s of SERIES) {
+    const d = hist.map((p, i) => `${i ? "L" : "M"}${x(ts[i]).toFixed(1)},${y(p[s.key]).toFixed(1)}`).join("");
+    g += `<path d="${d}" fill="none" stroke="${s.color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
+    const last = hist[hist.length - 1][s.key];
+    g += `<circle cx="${x(t1)}" cy="${y(last)}" r="4" fill="${s.color}" stroke="var(--card)" stroke-width="2"/>`
+       + `<text x="${W - R + 8}" y="${y(last) + 4}" style="fill:var(--text)">${fmt(last, 0)}</text>`;
+  }
+  g += `<line id="cross" y1="${T}" y2="${H - B}" stroke="var(--muted)" stroke-width="1" visibility="hidden"/>`;
+  svg.innerHTML = g;
+
+  const lastP = hist[hist.length - 1];
+  document.getElementById("legend").innerHTML = SERIES.map(s =>
+    `<span><i style="background:${s.color}"></i>${s.name}: <b>${fmt(lastP[s.key])}</b></span>`).join("");
+
+  // crosshair + tooltip
+  const tip = document.getElementById("tip"), cross = svg.querySelector("#cross");
+  const move = ev => {
+    const rect = svg.getBoundingClientRect();
+    const px = ((ev.touches ? ev.touches[0].clientX : ev.clientX) - rect.left) * (W / rect.width);
+    const t = t0 + (px - L) / (W - L - R) * ((t1 - t0) || 1);
+    let i = 0, best = Infinity;
+    ts.forEach((v, k) => { const dd = Math.abs(v - t); if (dd < best) { best = dd; i = k; } });
+    const p = hist[i], cx = x(ts[i]);
+    cross.setAttribute("x1", cx); cross.setAttribute("x2", cx); cross.setAttribute("visibility", "visible");
+    tip.hidden = false;
+    tip.innerHTML = `${new Date(p.t).toLocaleString()}<br>` + SERIES.map(s =>
+      `<i style="background:${s.color}"></i>${fmt(p[s.key])} <span class="n">(${p[s.key] - initial >= 0 ? "+" : ""}${fmt(p[s.key] - initial)})</span>`).join("<br>");
+    const left = cx / W * rect.width;
+    tip.style.left = Math.min(Math.max(left + 12, 0), rect.width - tip.offsetWidth - 4) + "px";
+  };
+  const leave = () => { tip.hidden = true; cross.setAttribute("visibility", "hidden"); };
+  svg.onmousemove = move; svg.ontouchmove = move; svg.onmouseleave = leave; svg.ontouchend = leave;
+}
+window.addEventListener("resize", drawChart);
+
 async function load() {
   try {
     const res = await fetch(SRC + "?t=" + Date.now(), { cache: "no-store" });
     if (!res.ok) throw new Error(res.status);
-    render(await res.json());
+    const d = await res.json();
+    initial = d.initial || initial;
+    render(d);
   } catch (e) {
     document.getElementById("status").innerHTML = `<span class="stale">Could not load data (${esc(e.message)}). Retrying…</span>`;
   }
+  try {
+    const h = await fetch(HIST + "?t=" + Date.now(), { cache: "no-store" });
+    if (h.ok) hist = await h.json();
+  } catch (e) { /* curve keeps its last data */ }
+  drawChart();
 }
 load();
 setInterval(load, 60000);
