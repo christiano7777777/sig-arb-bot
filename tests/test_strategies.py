@@ -6,7 +6,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import config  # noqa: E402
 import pair_maker  # noqa: E402
+import stat_model  # noqa: E402
 import strategy_c  # noqa: E402
+import strategy_d  # noqa: E402
 
 # Delaware-like at 06:55 UTC 2026-10-04: SUSQ NO_D 0.12/0.125, NO_R 0.84/0.845; Kalshi p_D 0.986
 BOOKS = {"D": {"bids": [(0.12, 3000)], "asks": [(0.125, 2000)]},
@@ -106,6 +108,87 @@ def test_c_null_case_market_at_fair_no_risk_adding_quotes():
     fair_books = {"D": {"bids": [(0.01, 9000)], "asks": [(0.02, 9000)]}, "R": {"bids": [(0.98, 9000)], "asks": [(0.99, 9000)]}}
     res = strategy_c.quotes(fair_books, P, {"D": 5_000, "R": 5_000}, cash=10_000)
     assert not [o for o in res["orders"] if o["adds"]]
+
+
+# ---- D: Senate-control stat arb ---------------------------------------------
+def pin_d():
+    config.D_ENTRY_GAP, config.D_EXIT_GAP, config.D_BAND_FRAC, config.D_MIN_TRADE = 0.03, 0.01, 0.10, 25
+    config.D_MAX_ORDERS, config.D_CLIP = 6, 1_000
+
+
+def test_model_reproduces_the_and_example():
+    stat_model.R_HOLDOVER, stat_model.R_CONTROL = 48, 50            # need both of 2 races: X = A and B
+    try:
+        assert abs(stat_model.p_control([0.6, 0.7], 0.0) - 0.42) < 1e-9
+        d = stat_model.deltas([0.6, 0.7], 0.0)
+        assert abs(d[0] - 0.7) < 1e-6 and abs(d[1] - 0.6) < 1e-6   # dP(X)/dP(A) = P(B)
+    finally:
+        stat_model.R_HOLDOVER, stat_model.R_CONTROL = 31, 50
+
+
+def test_model_calibration_recovers_a_known_correlation():
+    import random
+    random.seed(7)
+    p = [random.uniform(0.05, 0.95) for _ in range(35)]
+    rho = stat_model.calibrate(p, stat_model.p_control(p, 0.35))
+    assert abs(rho - 0.35) < 1e-3
+
+
+CTRL = {"D": {"bid": 0.315, "ask": 0.325}, "R": {"bid": 0.67, "ask": 0.68}}     # SUSQ P(R) ~ 0.32
+HB = {"Texas Senate": {"D": {"bid": 0.35, "ask": 0.36}, "R": {"bid": 0.62, "ask": 0.63}},
+      "Maine Senate": {"D": {"bid": 0.40, "ask": 0.41}, "R": {"bid": 0.57, "ask": 0.58}}}
+DEL = {"Texas Senate": 0.15, "Maine Senate": 0.147}
+
+
+def test_d_enters_long_r_when_susq_is_below_kalshi_and_hedges_next_round():
+    pin_d()
+    res = strategy_d.plan(0.375, CTRL, DEL, HB, {}, cash=10_000)
+    assert res["direction"] == 1
+    assert [(o["race"], o["leg"], o["side"]) for o in res["orders"]] == [("ctrl", "D", "buy")]   # no hedge yet
+    res = strategy_d.plan(0.375, CTRL, DEL, HB, {("ctrl", "D"): 1_000}, cash=10_000)
+    hedges = {(o["race"], o["leg"]): o["qty"] for o in res["orders"] if o["kind"] == "hedge"}
+    assert hedges == {("Texas Senate", "R"): 150, ("Maine Senate", "R"): 147}           # N x delta, NO on the Republican
+
+
+def test_d_no_entry_below_the_entry_gap():
+    pin_d()
+    assert strategy_d.plan(0.34, CTRL, DEL, HB, {}, cash=10_000)["orders"] == []
+
+
+def test_d_hedge_inside_the_band_is_left_alone():
+    pin_d()
+    led = {("ctrl", "D"): 1_000, ("Texas Senate", "R"): 140, ("Maine Senate", "R"): 150}  # off by 10 and 3 (band 100)
+    res = strategy_d.plan(0.375, CTRL, DEL, HB, led, cash=0)
+    assert not [o for o in res["orders"] if o["kind"] == "hedge"]
+
+
+def test_d_exits_everything_when_the_gap_closes():
+    pin_d()
+    led = {("ctrl", "D"): 1_000, ("Texas Senate", "R"): 150, ("Maine Senate", "R"): 147}
+    res = strategy_d.plan(0.325, CTRL, DEL, HB, led, cash=10_000)                     # gap 0.005 <= 0.01
+    assert res["direction"] == 0
+    assert {(o["race"], o["leg"], o["side"], o["qty"]) for o in res["orders"]} == {
+        ("ctrl", "D", "sell", 1_000), ("Texas Senate", "R", "sell", 150), ("Maine Senate", "R", "sell", 147)}
+
+
+def test_d_exits_when_the_gap_changes_sign():
+    pin_d()
+    res = strategy_d.plan(0.28, CTRL, DEL, HB, {("ctrl", "D"): 1_000}, cash=10_000)
+    assert res["direction"] == 0 and ("ctrl", "D", "sell") in {(o["race"], o["leg"], o["side"]) for o in res["orders"]}
+
+
+def test_d_short_direction_uses_the_other_legs():
+    pin_d()
+    res = strategy_d.plan(0.27, CTRL, DEL, HB, {}, cash=10_000)                        # SUSQ R too high
+    assert res["direction"] == -1 and res["orders"][0]["leg"] == "R"
+    res = strategy_d.plan(0.27, CTRL, DEL, HB, {("ctrl", "R"): 1_000}, cash=10_000)
+    assert {o["leg"] for o in res["orders"] if o["kind"] == "hedge"} == {"D"}
+
+
+def test_d_spends_no_more_than_its_cash():
+    pin_d()
+    res = strategy_d.plan(0.375, CTRL, DEL, HB, {}, cash=300)
+    assert sum(o["qty"] * o["price"] for o in res["orders"] if o["side"] == "buy") <= 300 + 1e-9
 
 
 if __name__ == "__main__":

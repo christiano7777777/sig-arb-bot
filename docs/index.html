@@ -69,7 +69,7 @@
   .tabs button[aria-selected="true"] { color: var(--text); border-bottom-color: var(--text); font-weight: 600; }
   .badge { display: inline-block; min-width: 18px; padding: 0 5px; border-radius: 5px; font-size: 11px; font-weight: 700;
            color: #fff; text-align: center; line-height: 18px; vertical-align: 1px; }
-  .ba { background: var(--s1); } .bb { background: var(--s3); } .bm { background: var(--s4); }
+  .ba { background: var(--s1); } .bb { background: var(--s3); } .bm { background: var(--s4); } .bd { background: var(--s2); }
   .split { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; }
   .panel { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
   .panel.pa { border-top: 3px solid var(--s1); } .panel.pb { border-top: 3px solid var(--s3); }
@@ -87,6 +87,7 @@
     <button role="tab" data-tab="a"><span class="badge ba">A</span> Arbitrage</button>
     <button role="tab" data-tab="m"><span class="badge bm">B</span> Pair maker</button>
     <button role="tab" data-tab="b"><span class="badge bb">C</span> Kalshi market making</button>
+    <button role="tab" data-tab="d"><span class="badge bd">D</span> Senate stat arb</button>
   </div>
 
   <section data-panel="overview">
@@ -182,6 +183,27 @@
       tagging began; earlier B trades are estimated (single legs on B races). Expected gain uses Kalshi's current
       probabilities, not a locked profit.</p>
   </section>
+  <section data-panel="d" hidden>
+    <p class="strat"><span class="badge bd">D</span> Trades SUSQ's "U.S. Senate" market toward Kalshi's control price and hedges it with
+      the state Senate races: hedge per state = control position x delta, delta = how often that race decides control under a
+      national-swing model calibrated to Kalshi (correlation rho). Enter at a gap of <span id="dentry"></span>, exit everything at
+      <span id="dexit"></span>; hedges rebalanced when off target by more than the band.</p>
+    <div class="cards" id="dcards"></div>
+    <h2>Hedge book <span class="n">(sorted by delta; races not on SUSQ cannot be hedged)</span></h2>
+    <div class="tablewrap" style="margin-bottom:18px">
+      <table>
+        <thead><tr><th>Race</th><th>Kalshi P(Rep)</th><th>Delta</th><th>Hedge target</th><th>D holds</th><th>Hedge leg NO bid / ask</th></tr></thead>
+        <tbody id="drows"></tbody>
+      </table>
+    </div>
+    <h2>D trades</h2>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Time</th><th>Kind</th><th>Side</th><th>Race</th><th>Leg</th><th>Shares</th><th>Price</th></tr></thead>
+        <tbody id="drecent"></tbody>
+      </table>
+    </div>
+  </section>
   <p class="note">Data refreshes every minute (GitHub's file cache can add up to ~5 minutes).</p>
 </main>
 <script>
@@ -216,6 +238,7 @@ function render(d) {
 
   snap = d;
   renderB(d.b);       // uses snap
+  renderD(d.d);
   const a24 = (d.activity || {})["24h"] || {};
   const locked = d.rows.reduce((s, r) => s + (r.locked || 0), 0);
   document.getElementById("sumA").innerHTML =
@@ -278,6 +301,26 @@ function renderB(b) {
     card(`Fills, last ${w}`, fmt(m[w].fills, 0), `${fmt(m[w].shares, 0)} shares`)).join("");
   document.getElementById("mrecent").innerHTML = (m.recent || []).map(t => tradeRow(t, false)).join("")
     || `<tr><td colspan="6" class="n">No pair-maker fills since order tagging began.</td></tr>`;
+}
+
+function renderD(d) {
+  if (!d) { document.getElementById("dcards").innerHTML = card("Strategy D", "off", ""); return; }
+  if (d.error) { document.getElementById("dcards").innerHTML = card("Strategy D", "–", esc(d.error)); return; }
+  document.getElementById("dentry").textContent = fmt(d.entry_gap, 2);
+  document.getElementById("dexit").textContent = fmt(d.exit_gap, 2);
+  const dir = d.direction > 0 ? "long Rep control" : d.direction < 0 ? "short Rep control" : "flat";
+  const gapNote = d.gap == null ? "" : Math.abs(d.gap) >= d.entry_gap ? "≥ entry: trade" : Math.abs(d.gap) <= d.exit_gap ? "≤ exit" : "between exit and entry";
+  document.getElementById("dcards").innerHTML =
+    card("Gap (Kalshi − SUSQ, Rep control)", d.gap == null ? "–" : (d.gap >= 0 ? "+" : "") + fmt(d.gap, 4), `Kalshi ${fmt(d.kalshi_r, 3)} · SUSQ ${fmt(d.susq_r, 4)} · ${gapNote}`) +
+    card("Position", fmt(d.control, 0), `${dir} · capital ${fmt(d.capital, 0)}`) +
+    card("Model correlation (rho)", d.rho == null ? "no fit" : fmt(d.rho, 3), "calibrated to Kalshi's control price") +
+    card("D P&L", (d.pnl_bid >= 0 ? "+" : "") + fmt(d.pnl_bid), `at SUSQ bids · ${(d.pnl_fair >= 0 ? "+" : "") + fmt(d.pnl_fair)} at Kalshi fair`, d.pnl_bid >= 0 ? "pos" : "neg");
+  document.getElementById("drows").innerHTML = (d.races || []).map(r => `<tr><td>${esc(r.race)}</td><td>${fmt(r.p_r, 3)}</td>
+    <td>${fmt(r.delta, 3)}</td><td>${r.on_susq ? fmt(r.target, 0) : '<span class="n">not on SUSQ</span>'}</td><td>${fmt(r.held, 0)}</td>
+    <td>${r.book ? `${fmt(r.book.bid, 3)} / ${fmt(r.book.ask, 3)}` : "–"}</td></tr>`).join("");
+  document.getElementById("drecent").innerHTML = (d.recent || []).map(t => `<tr><td>${new Date(t.ts).toLocaleTimeString()}</td><td>${esc(t.kind)}</td>
+    <td class="k-${t.side}">${t.side.toLowerCase()}</td><td>${esc(t.race)}</td><td>NO ${esc(String(t.party).slice(0, 3))}</td>
+    <td>${fmt(t.qty, 0)}</td><td>${fmt(t.price, 4)}</td></tr>`).join("") || `<tr><td colspan="7" class="n">No D trades yet.</td></tr>`;
 }
 
 let snap = null;
@@ -424,7 +467,7 @@ window.addEventListener("resize", drawChart);
 
 // ---------- tabs ----------
 function showTab(t) {
-  if (!["overview", "a", "m", "b"].includes(t)) t = "overview";
+  if (!["overview", "a", "m", "b", "d"].includes(t)) t = "overview";
   document.querySelectorAll(".tabs button").forEach(b => b.setAttribute("aria-selected", String(b.dataset.tab === t)));
   document.querySelectorAll("section[data-panel]").forEach(s => s.hidden = s.dataset.panel !== t);
   try { localStorage.setItem("tab", t); } catch (e) { /* storage may be blocked */ }

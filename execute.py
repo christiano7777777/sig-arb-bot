@@ -42,6 +42,7 @@ import config
 from arb_math import (ceil_to_tick, fill_price, floor_to_tick, no_asks_from_yes_bids, no_bids_from_yes_asks,
                       walk_baskets, walk_exit, widen_limits)
 from b_executor import BExecutor
+from d_executor import DExecutor
 from realtime_feed import Feed
 from baskets import list_markets, two_party_baskets
 from susq_client import ApiError, SusqClient
@@ -80,9 +81,12 @@ class Runner:
         self.baskets = [Basket(self, b["name"], b["legs"]) for b in found]
         print(f"tournament {self.tour['slug']}  run_id {self.run_id}  mode {'LIVE' if live else 'DRY RUN'}")
         print(f"{len(self.baskets)} two-party races; skipped: " + "; ".join(f"{r} ({why})" for r, why in skipped))
+        self.d = None              # strategy D (set below): its ledger is hidden from A, B and C
+        self.state_dir = STATE_DIR
         self.b_resting = set()     # exchanges with a resting strategy-B / pair-maker quote
         self.quote_live = {}       # (exchangeId, side) -> (price, qty, expiry epoch, owner) of our resting quotes
         self.b = BExecutor(self) if config.B_ENABLED else None
+        self.d = DExecutor(self) if getattr(config, "D_ENABLED", False) else None
         # realtime feed (2026-10-04): pushed books + our account events; REST stays the fallback
         self.feed = None
         self._bulk, self._bulk_t = {}, 0.0            # last REST bulk quotes and when they were read
@@ -113,6 +117,10 @@ class Runner:
                 continue
             q = p["quantity"]
             out[p["exchangeId"]] = {"no": max(0.0, -q), "yes": max(0.0, q), "cost": p.get("costBasis") or 0.0}
+        if self.d is not None:                    # strategy D's shares belong to D: A, B and C never see them
+            for ex, qty in self.d.ledger.items():
+                if ex in out:
+                    out[ex]["no"] = max(0.0, out[ex]["no"] - qty)
         self._pos, self._pos_t = out, time.time()
         return out
 
@@ -213,6 +221,8 @@ class Runner:
             return "C", "quote"
         if tag.startswith("b-take"):
             return "C", "take"
+        if tag.startswith("d-"):
+            return "D", tag.split("-")[1]           # ctrl / hedge
         if tag.startswith("fix"):
             return "A", "fix"
         return "A", tag.replace("pair-", "")      # buy / sell (exit or swap)
@@ -250,8 +260,10 @@ class Runner:
             self._cash = None                     # (orders clear it too)
         q = self.quotes()
         held = self.positions(fresh=False)
-        if self.b is not None:      # strategy B first: its buys are worth more than an arb entry
+        if self.b is not None:      # strategies B and C first: their buys are worth more than an arb entry
             self.b.step(q, held)
+        if self.d is not None:      # strategy D: Senate-control stat arb (own ledger)
+            self.d.step(q)
         entries, exits = [], []
         for b in self.baskets:
             edge = self.top_edge(q, b)
@@ -437,7 +449,8 @@ class Basket:
         self.cash_blocked = False   # set by plan(): out of cash above the reserve
         self.paused_until = 0.0     # after a rejected pair order: leave this race alone until then
         # strategy B race: may hold unequal legs on purpose; arb trades keep that imbalance unchanged
-        self.b_race = config.B_ENABLED and name in config.B_RACES
+        # (independent of B_ENABLED: legacy C positions stay unequal even if B/C are switched off)
+        self.b_race = name in config.B_RACES or name == getattr(config, "D_CONTROL_RACE", None)
 
     # ---- reads -----------------------------------------------------------
     def books(self):

@@ -93,6 +93,29 @@ B_RACE_CAP = None          # per-race cap = total cap x the race's share of pair
 B_CLOSE_REF = 5_000        # closing: leftover size at which the buy-back bid is zero
 B_CLOSE_CLIP = 500         # closing: shares offered at the best ask per round (slow unwind)
 B_CLOSE_BID_RATIO = 0.5    # closing: buy-back bid = ratio * clip * (1 - leftover / B_CLOSE_REF)
+# --- Strategy D: Senate-control stat arb (user, 2026-10-04; strategy_d.py, stat_model.py) ---
+# Trade SUSQ "U.S. Senate" toward Kalshi's control price, delta-hedged with the state Senate races:
+# delta_i = dP(R control)/dp_i under a national-swing model calibrated to Kalshi's control price.
+D_ENABLED = True
+D_CAPITAL = 10_000           # SUSQies for D (control leg + hedges, at cost); starts with whatever cash is free
+D_ENTRY_GAP = 0.03           # enter when |Kalshi - SUSQ| on Republican control >= this
+D_EXIT_GAP = 0.01            # exit everything once it is <= this
+D_BAND_FRAC = 0.10           # rebalance a hedge only when it is off target by > this x the control position
+D_MIN_TRADE = 25             # ... and by at least this many shares
+D_INTERVAL_S = 60            # one D round per minute
+D_MAX_ORDERS = 6             # orders per round (largest deviations first)
+D_CLIP = 1_000               # control-leg shares per round
+D_CONTROL_RACE = "U.S. Senate"
+D_KALSHI_CONTROL = {"D": "CONTROLS-2026-D", "R": "CONTROLS-2026-R"}
+D_RACES = ["Alabama", "Alaska", "Arkansas", "Colorado", "Delaware", "Florida", "Georgia", "Idaho", "Illinois",
+           "Iowa", "Kansas", "Kentucky", "Louisiana", "Maine", "Massachusetts", "Michigan", "Minnesota",
+           "Mississippi", "Montana", "Nebraska", "New Hampshire", "New Jersey", "New Mexico", "North Carolina",
+           "Ohio", "Oklahoma", "Oregon", "Rhode Island", "South Carolina", "South Dakota", "Tennessee", "Texas",
+           "Virginia", "West Virginia", "Wyoming"]   # the 35 seats up in 2026 (+ " Senate")
+D_KALSHI_EXTRA = {"Montana Senate": "SENATEMT-26-R", "Nebraska Senate": "SENATENE-26-R",
+                  "Ohio Senate": "SENATEOHS-26-R"}   # P(R wins) for the 3 races SUSQ does not list
+D_LIVE_SINCE = "2026-10-04T13:39:00+00:00"   # D's fills counted from here (ledger rebuild)
+
 # --- Strategy C: Kalshi-anchored two-sided market making (user, 2026-10-04; strategy_c.py) ---
 C_LIMIT = 2_000            # directional inventory per race: risk-adding quotes only below this
 C_SKEW = 0.10              # reservation price moves this far from Kalshi fair at C_LIMIT of exposure

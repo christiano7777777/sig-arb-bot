@@ -65,7 +65,7 @@ class FakeClient:
 
 
 def make_runner(fake, min_edge=0.005, exposure=None, capital=50_000, reserve=50_000, race_cap=5_000,
-                denylist=(), extra=False, b_enabled=False, maker=False):
+                denylist=(), extra=False, b_enabled=False, maker=False, d_enabled=False):
     # pin every setting the tests rely on, so editing config.py cannot silently change a test
     config.MIN_EDGE, config.MAX_UNHEDGED_EXPOSURE = min_edge, exposure
     config.MAX_CAPITAL_PER_RUN, config.RESERVE, config.PER_RACE_CAP = capital, reserve, race_cap
@@ -75,6 +75,7 @@ def make_runner(fake, min_edge=0.005, exposure=None, capital=50_000, reserve=50_
     config.ROTATE_MAX_SPEND = 2_000
     config.B_ENABLED = b_enabled
     config.REALTIME_ENABLED = False                 # feed tests attach a fake feed explicitly
+    config.D_ENABLED = d_enabled
     config.C_LIMIT, config.C_SKEW, config.C_SKEW_MAX, config.C_QUOTE_EDGE, config.C_CLIP = 2_000, 0.10, 0.25, 0.02, 500
     config.C_EXTRA_RACES = 5
     config.POSITIONS_REFRESH_S, config.BULK_REFRESH_S = 30, 30
@@ -953,6 +954,64 @@ def test_c_bids_only_in_a_race_we_do_not_hold():
     r.b.step(r.quotes(), r.positions())
     orders = _c_orders(r)
     assert orders and all(o["action"] == "buy" for o in orders)                       # nothing to sell
+
+
+# ---- strategy D (Senate-control stat arb) ---------------------------------------
+# U.S. Senate: YES Dem bid 0.675 / ask 0.68 -> NO Dem 0.32 / 0.325 (SUSQ P(R) ~ 0.3225); Kalshi R 0.375
+SEN = {"D": ([(0.675, 9000)], [(0.68, 9000)]), "R": ([(0.32, 9000)], [(0.325, 9000)])}
+TX = {"D": ([(0.64, 9000)], [(0.645, 9000)]), "R": ([(0.355, 9000)], [(0.36, 9000)])}
+
+
+def _d_runner(ledger=None, kalshi_r=0.375):
+    import kalshi, stat_model, d_executor
+    config.D_RACES = ["Texas"]
+    config.B_RACES = {"Texas Senate": {"event": "SENATETX-26", "D": "SENATETX-26-D", "R": "SENATETX-26-R"}}
+    config.D_KALSHI_EXTRA = {}
+    config.D_ENTRY_GAP, config.D_EXIT_GAP, config.D_BAND_FRAC, config.D_MIN_TRADE = 0.03, 0.01, 0.10, 25
+    config.D_MAX_ORDERS, config.D_CLIP, config.D_CAPITAL, config.D_INTERVAL_S = 6, 1_000, 10_000, 60
+    config.B_MAX_KALSHI_SPREAD = 0.02
+    kalshi.market = lambda t: {"yes_bid_dollars": str(kalshi_r - 0.005), "yes_ask_dollars": str(kalshi_r + 0.005)}         if t.startswith("CONTROLS") else {"yes_bid_dollars": "0.35", "yes_ask_dollars": "0.36"}
+    stat_model.calibrate = lambda p, target: 0.4
+    stat_model.deltas = lambda p, rho: [0.15]
+    d_executor.urllib.request.urlopen = lambda *a, **k: (_ for _ in ()).throw(OSError("offline"))   # no tags
+    fake = FakeClient({"U.S. Senate": SEN, "Texas Senate": TX}, balance=1_000 + 5_000)
+    r = make_runner(fake, d_enabled=True)
+    if ledger:
+        r.d.ledger = {fake.ex_of(*k): v for k, v in ledger.items()}
+    return fake, r
+
+
+def _d_orders(r):
+    return [b for _, b in r.sent if "legs" not in b and b["idempotencyKey"].split("-")[-2] == "d"]
+
+
+def test_d_enters_long_r_control_when_susq_is_below_kalshi():
+    fake, r = _d_runner()
+    r.d.step(r.quotes())
+    o = _d_orders(r)
+    assert len(o) == 1 and o[0]["exchangeId"] == fake.ex_of("U.S. Senate", "D") and o[0]["action"] == "buy"
+    assert o[0]["price"] == 0.325                                         # NO on Dem control at the ask
+
+
+def test_d_hedges_held_control_with_no_on_the_state_republican():
+    fake, r = _d_runner(ledger={("U.S. Senate", "D"): 1_000})
+    r.d.step(r.quotes())
+    h = [o for o in _d_orders(r) if o["exchangeId"] == fake.ex_of("Texas Senate", "R")]
+    assert h and h[0]["action"] == "buy" and h[0]["quantity"] == 150      # 1,000 x delta 0.15
+
+
+def test_d_exits_when_converged():
+    fake, r = _d_runner(ledger={("U.S. Senate", "D"): 1_000, ("Texas Senate", "R"): 150}, kalshi_r=0.325)
+    r.d.step(r.quotes())
+    got = {(o["exchangeId"], o["action"], o["quantity"]) for o in _d_orders(r)}
+    assert got == {(fake.ex_of("U.S. Senate", "D"), "sell", 1_000), (fake.ex_of("Texas Senate", "R"), "sell", 150)}
+
+
+def test_d_ledger_is_hidden_from_the_other_strategies():
+    fake, r = _d_runner(ledger={("Texas Senate", "R"): 150})
+    ex = fake.ex_of("Texas Senate", "R")
+    fake.held = {ex: (-1_150, 500.0), fake.ex_of("Texas Senate", "D"): (-1_000, 600.0)}
+    assert r.positions()[ex]["no"] == 1_000                               # A/B/C see 1,000 pairs, not 1,150
 
 
 def test_arb_trade_allowed_on_b_race_with_unequal_legs():

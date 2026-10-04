@@ -26,8 +26,18 @@ def build(c):
     t = c.get(f"/tournaments/{config.TOURNAMENT_SLUG}")
     cash = t["myBalance"]
     pos = c.get(f"/tournaments/{config.TOURNAMENT_SLUG}/portfolio/positions")
+    tags = load_tags(sys.argv[1] if len(sys.argv) > 1 else None)
+    attrib = tagged_fills(c, t["id"], tags)
+    d_ledger = {}                                    # strategy D's NO shares per exchange (from its own fills)
+    for f in attrib["D"]:
+        d_ledger[f["ex"]] = d_ledger.get(f["ex"], 0) + (f["qty"] if f["side"] == "BUY" else -f["qty"])
+    d_ledger = {e: q for e, q in d_ledger.items() if q > 0}
     races = defaultdict(dict)
     for p in pos["positions"]:
+        if p["exchangeId"] in d_ledger:              # A/B/C views exclude D (its block shows them)
+            share = d_ledger[p["exchangeId"]] / max(-p["quantity"], 1)
+            p = {**p, "quantity": min(p["quantity"] + d_ledger[p["exchangeId"]], 0),
+                 "costBasis": (p.get("costBasis") or 0) * max(0.0, 1 - share)}
         if p["quantity"] and not p["settled"]:
             g = TITLE.match(p["marketTitle"].strip())
             name, party = (g.group(2), g.group(1)) if g else (p["marketTitle"], p["exchangeId"])
@@ -74,8 +84,6 @@ def build(c):
 
     total_pairs = sum(r["pairs"] for r in rows)
     activity, recent, b_trades = trade_activity(c)
-    tags = load_tags(sys.argv[1] if len(sys.argv) > 1 else None)
-    attrib = tagged_fills(c, t["id"], tags)
     # strategy B trades: exact (tagged orders) since tagging began, estimated (single legs) before it
     since_tags = getattr(config, "TAGS_SINCE", "2100-01-01T00:00:00+00:00")
     b_trades = [x for x in b_trades if x["ts"] < since_tags[:19]] + attrib["C"]   # C: Kalshi market making
@@ -86,7 +94,9 @@ def build(c):
     if b is not None:
         b["maker"] = maker_block(attrib["B"])                                          # B: pair maker
         b["attribution"] = {k: len(v) for k, v in attrib.items()}
+    d_view = strategy_d_block(c, quotes_all(c, t["id"], legs_of), legs_of, d_ledger, attrib["D"])
     return {
+        "d": d_view,
         "b": b,
         "activity": activity,
         "recent": recent,
@@ -194,7 +204,7 @@ def tagged_fills(c, tid, tags, max_pages=15):
     FILLS.parent.mkdir(exist_ok=True)
     FILLS.write_text(json.dumps(cache), encoding="utf-8")
     ex = exchange_map(c)
-    out = {"A": [], "B": [], "C": [], "untagged": []}
+    out = {"A": [], "B": [], "C": [], "D": [], "untagged": []}
     for f in sorted(cache.values(), key=lambda f: f["filledAt"]):
         if f["filledAt"] < since[:19]:
             continue
@@ -202,9 +212,10 @@ def tagged_fills(c, tid, tags, max_pages=15):
         tag = tags.get(str(f["orderId"]))
         row = {"ts": f["filledAt"][:19] + "+00:00", "race": race, "party": party, "qty": abs(f["quantity"]),
                "price": round(f["price"], 4) if f["price"] is not None else None,
-               "side": (tag[2] if tag else "?").upper(), "kind": tag[1] if tag else "?"}
+               "side": (tag[2] if tag else "?").upper(), "kind": tag[1] if tag else "?", "ex": f["exchangeId"]}
         # strategy from the order's kind (labels changed on 2026-10-04: maker = B, Kalshi take/quote = C)
-        strat = "untagged" if not tag else ("B" if tag[1] == "maker" else "C" if tag[1] in ("take", "quote") else "A")
+        strat = ("untagged" if not tag else "D" if tag[0] == "D" else "B" if tag[1] == "maker"
+                 else "C" if tag[1] in ("take", "quote") else "A")
         out[strat].append(row)
     return out
 
@@ -216,6 +227,67 @@ def maker_block(fills):
     win = {f"{h}h": {"fills": sum(1 for f in fills if age_h(f) <= h),
                      "shares": sum(f["qty"] for f in fills if age_h(f) <= h)} for h in WINDOWS_H}
     return {**win, "recent": fills[-25:][::-1]}
+
+
+def quotes_all(c, tid, legs_of):
+    """Best YES bid/ask for the Senate-control market and the 35 state Senate races (bulk, 1 read)."""
+    names = [config.D_CONTROL_RACE] + [f"{s} Senate" for s in config.D_RACES]
+    ids = [e for n in names for e in legs_of.get(n, {}).values()]
+    r = c.get("/exchanges/prices", ids=",".join(ids), tournamentId=tid) if ids else {"data": []}
+    return {q["exchangeId"]: q for q in r["data"]}
+
+
+def strategy_d_block(c, quotes, legs_of, ledger, fills):
+    """Strategy D: model (rho, deltas) recomputed from Kalshi, D's ledger vs its hedge targets, its trades
+    and P&L (cash flow + holdings at the SUSQ bid, and at Kalshi fair)."""
+    if not getattr(config, "D_ENABLED", False):
+        return None
+    import stat_model
+    races = [f"{s} Senate" for s in config.D_RACES]
+    tick = {r: (config.B_RACES[r]["R"] if r in config.B_RACES else config.D_KALSHI_EXTRA.get(r)) for r in races}
+    mid = lambda m: (float(m["yes_bid_dollars"]) + float(m["yes_ask_dollars"])) / 2
+    try:
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            ks = list(pool.map(lambda r: kalshi.market(tick[r]), races))
+        k_ctrl = kalshi.market(config.D_KALSHI_CONTROL["R"])
+    except Exception as e:                                          # noqa: BLE001
+        return {"error": f"Kalshi: {e}"}
+    p = [mid(m) for m in ks]
+    k_r = mid(k_ctrl)
+    rho = stat_model.calibrate(p, k_r)
+    dl = stat_model.deltas(p, rho) if rho is not None else [None] * len(p)
+    noq = lambda e: {"bid": round(1 - quotes[e]["bestAsk"], 4) if quotes.get(e, {}).get("bestAsk") is not None else None,
+                     "ask": round(1 - quotes[e]["bestBid"], 4) if quotes.get(e, {}).get("bestBid") is not None else None}
+    ctrl = legs_of.get(config.D_CONTROL_RACE, {})
+    ctrl_book = {x: noq(ctrl[x]) for x in ctrl}
+    susq_r = None if not ctrl_book.get("D") or None in ctrl_book["D"].values() else (ctrl_book["D"]["bid"] + ctrl_book["D"]["ask"]) / 2
+    n_d, n_r = ledger.get(ctrl.get("D"), 0), ledger.get(ctrl.get("R"), 0)
+    direction = 1 if n_d > 0 else -1 if n_r > 0 else 0
+    n = n_d or n_r
+    hedge_leg = "R" if direction >= 0 else "D"
+    rows = []
+    for r, pr, d in zip(races, p, dl):
+        legs = legs_of.get(r, {})
+        rows.append({"race": r, "p_r": round(pr, 4), "delta": None if d is None else round(d, 4), "on_susq": len(legs) == 2,
+                     "target": None if d is None or not legs else round(n * d), "held": ledger.get(legs.get(hedge_leg), 0) if legs else 0,
+                     "book": noq(legs[hedge_leg]) if legs else None})
+    rows.sort(key=lambda x: -(x["delta"] or 0))
+    # P&L: cash flow of D's fills + what it holds now, at the SUSQ bid and at Kalshi fair
+    flow = sum((-1 if f["side"] == "BUY" else 1) * f["qty"] * (f["price"] or 0) for f in fills)
+    fair_no = {}
+    for (r, pr) in zip(races, p):
+        for x, e in legs_of.get(r, {}).items():
+            fair_no[e] = pr if x == "D" else 1 - pr                     # NO on Dem pays if R wins
+    for x, e in ctrl.items():
+        fair_no[e] = k_r if x == "D" else 1 - k_r
+    bid_val = sum(q * (noq(e)["bid"] or 0) for e, q in ledger.items())
+    fair_val = sum(q * fair_no.get(e, 0) for e, q in ledger.items())
+    return {"kalshi_r": round(k_r, 4), "susq_r": None if susq_r is None else round(susq_r, 4),
+            "gap": None if susq_r is None else round(k_r - susq_r, 4), "rho": None if rho is None else round(rho, 4),
+            "direction": direction, "control": n, "entry_gap": config.D_ENTRY_GAP, "exit_gap": config.D_EXIT_GAP,
+            "capital": config.D_CAPITAL, "band": config.D_BAND_FRAC, "races": rows,
+            "pnl_bid": round(flow + bid_val, 2), "pnl_fair": round(flow + fair_val, 2),
+            "recent": [{k: f[k] for k in ("ts", "race", "party", "side", "qty", "price", "kind")} for f in fills[-25:][::-1]]}
 
 
 def add_c_view(b, quotes, legs_of, cash):
