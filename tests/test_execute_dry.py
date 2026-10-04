@@ -1057,6 +1057,22 @@ def test_a_gets_no_fresh_cash_when_split_among_others():
     assert r.sent == []
 
 
+def test_b_c_round_works_with_ds_control_market_present():
+    # live bug: D's control market ('U.S. Senate', no Kalshi race mapping) broke every B/C round
+    import kalshi
+    fake = FakeClient({"Delaware Senate": DE, "U.S. Senate": SEN}, balance=5_000)
+    fake.held = {fake.ex_of("Delaware Senate", x): (-5_000, 2_500.0) for x in "DR"}
+    config.B_RACES = {"Delaware Senate": {"event": "SENATEDE-26", "D": "SENATEDE-26-D", "R": "SENATEDE-26-R"}}
+    config.D_CONTROL_RACE = "U.S. Senate"
+    kalshi.fair = lambda t, m: {"ok": True, "why": "", "p": {"D": 0.986, "R": 0.014}, "mid": {"D": 0.986, "R": 0.014}, "spread": {}}
+    r = make_runner(fake, b_enabled=True)
+    import io, contextlib
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        r.b.step(r.quotes(), r.positions())
+    assert "unexpected error" not in buf.getvalue() and _b_orders(r)
+
+
 def test_arb_trade_allowed_on_b_race_with_unequal_legs():
     fake, r = _b_runner(37_588, 32_588, balance=1_000)
     b = basket(r, "Delaware Senate")

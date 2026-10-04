@@ -33,7 +33,9 @@ def now_plus(seconds):
 class BExecutor:
     def __init__(self, runner):
         self.r = runner
-        self.races = [b for b in runner.baskets if b.b_race]
+        # races with a Kalshi mapping only (b_race is also true for D's control market, which has none:
+        # using b_race here made every B/C round fail with KeyError 'U.S. Senate' from 13:37 to 14:50 UTC)
+        self.races = [b for b in runner.baskets if b.name in config.B_RACES]
         missing = set(config.B_RACES) - {b.name for b in self.races}
         print(f"B: {len(self.races)} races mapped to Kalshi (traded while held)"
               + (f"; not found on SUSQ: {sorted(missing)}" if missing else ""))
