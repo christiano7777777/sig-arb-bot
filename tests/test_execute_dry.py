@@ -456,6 +456,17 @@ def test_swap_sells_first_with_no_cash_at_all():
     assert [b["legs"][0]["action"] for _, b in r.sent] == ["sell", "buy"]
 
 
+def test_sell_first_swap_buys_even_when_the_sale_frees_under_50():
+    # live bug 2026-10-04: a sale freeing < 50 cash never bought (the 50 trigger still applied)
+    seller = {"D": ([(0.4, 5)], [(0.5, 20)]), "R": ([(0.4, 5)], [(0.505, 20)])}       # 20 pairs bid 0.995
+    fake = FakeClient({"Held race": seller, "New race": EDGE_01}, balance=1_000)
+    fake.held = {fake.ex_of("Held race", "D"): (-5000, 2500.0), fake.ex_of("Held race", "R"): (-5000, 2450.0)}
+    r = make_runner(fake, exposure=500)
+    r.poll()
+    assert [b["legs"][0]["action"] for _, b in r.sent] == ["sell", "buy"]
+    assert r.sent[1][1]["legs"][0]["quantity"] == 20
+
+
 def test_swap_buys_first_when_cash_covers_it():
     fake, r = _swap_setup(balance=1_000 + 2_000)
     r.poll()

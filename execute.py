@@ -299,7 +299,8 @@ class Runner:
         # buy with what the sale freed, never above the price that keeps the swap gain
         self._cash = None
         budget = self.cached_balance() - config.HARD_RESERVE
-        p = b.plan(b.books(), min_edge=max(config.ROTATE_ENTRY_EDGE, 1.0 - sum(lim_n)), budget=budget)
+        # min_cash=1: spend whatever the sale freed, even under the 50 "out of budget" trigger
+        p = b.plan(b.books(), min_edge=max(config.ROTATE_ENTRY_EDGE, 1.0 - sum(lim_n)), budget=budget, min_cash=1)
         if p is None:
             print(f"  ROTATE {b.name}: sold {sold:g} pairs but the new pair is no longer <= {sum(lim_n):.3f}")
             return True
