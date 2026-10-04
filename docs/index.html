@@ -105,7 +105,8 @@
         <div class="tip" id="tip" hidden></div>
       </div>
     </div>
-    <h2>P&amp;L by strategy <span class="n" id="ssince"></span></h2>
+    <h2>P&amp;L by strategy</h2>
+    <p class="note" id="ssince" style="margin:-4px 0 8px"></p>
     <div class="chartcard" style="margin-bottom:18px">
       <div class="legend" id="slegend"></div>
       <div class="chartwrap">
@@ -488,12 +489,23 @@ function drawStratChart() {
   if (!svg || svg.closest("section").hidden) return;
   const W = svg.clientWidth || 600, H = 240, L = 58, R = 92, T = 10, B = 26;
   svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
-  const pts = windowPoints().filter(p => p.s);
-  if (snap && snap.strategy_pnl_since)
-    document.getElementById("ssince").textContent = `(each strategy's own trades since ${new Date(snap.strategy_pnl_since).toLocaleString()}, at Kalshi fair; they add up to the total)`;
+  // since the Cup began: the 10-minute grid (B, C, D at cost) until market-value points were recorded,
+  // then the recorded points (A: pairs pay 1, legs at cost; B, C, D: current SUSQ market value)
+  const live = hist.filter(p => p.s2).map(p => ({ t: p.t, s: p.s2 }));
+  const firstLive = live.length ? new Date(live[0].t).getTime() : Infinity;
+  let pts = ((snap && snap.strategy_series) || []).filter(p => new Date(p.t).getTime() < firstLive)
+    .map(p => ({ t: p.t, s: { A: p.A, B: p.B, C: p.C, D: p.D } })).concat(live);
+  if (pts.length && winHours) {
+    const end = new Date(pts[pts.length - 1].t).getTime();
+    pts = pts.filter(p => new Date(p.t).getTime() >= end - winHours * 3600e3);
+  }
+  const now = (snap && snap.strategy_now) || {};
+  const total = ["A", "B", "C", "D"].reduce((a, k) => a + (now[k] || 0), 0);
+  document.getElementById("ssince").textContent =
+    `Since the Cup began. A: pairs pay 1, single legs at cost. B, C, D: current SUSQ market value (mid), recorded from ${live.length ? new Date(live[0].t).toLocaleString() : "now on"}; before that at cost. Together ${(total >= 0 ? "+" : "") + fmt(total)}; the main curve can differ because legs held by different strategies pair up in the total.`;
   if (pts.length < 2) {
-    svg.innerHTML = `<text x="${W / 2}" y="${H / 2}" text-anchor="middle" style="fill:var(--muted);font-size:12px">Recording started: one point every 2 min, the lines appear after the second.</text>`;
-    document.getElementById("slegend").innerHTML = SSER.map(s => `<span><i style="background:${s.color}"></i>${s.name}: <b>${snap && snap.strategy_pnl ? fmt(snap.strategy_pnl[s.key].pnl) : "–"}</b></span>`).join("");
+    svg.innerHTML = `<text x="${W / 2}" y="${H / 2}" text-anchor="middle" style="fill:var(--muted);font-size:12px">Waiting for data…</text>`;
+    document.getElementById("slegend").innerHTML = SSER.map(s => `<span><i style="background:${s.color}"></i>${s.name}: <b>${fmt(now[s.key])}</b></span>`).join("");
     return;
   }
   const ts = pts.map(p => new Date(p.t).getTime());
@@ -504,8 +516,9 @@ function drawStratChart() {
   let g = "";
   for (const v of niceTicks(lo, hi)) g += `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="var(--grid)"/><text x="${L - 6}" y="${y(v) + 4}" text-anchor="end" style="fill:var(--muted);font-size:11px">${fmt(v, 0)}</text>`;
   g += `<line x1="${L}" x2="${W - R}" y1="${y(0)}" y2="${y(0)}" stroke="var(--muted)" stroke-dasharray="4 4"/>`;
-  for (let k = 0; k <= 3; k++) { const t = t0 + (t1 - t0) * k / 3;
-    g += `<text x="${x(t)}" y="${H - 6}" text-anchor="${k === 0 ? "start" : k === 3 ? "end" : "middle"}" style="fill:var(--muted);font-size:11px">${new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</text>`; }
+  for (let k = 0; k <= 3; k++) { const t = t0 + (t1 - t0) * k / 3, dt = new Date(t);
+    const lab = (t1 - t0) > 36 * 3600e3 ? dt.toLocaleDateString([], { month: "short", day: "numeric" }) : dt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    g += `<text x="${x(t)}" y="${H - 6}" text-anchor="${k === 0 ? "start" : k === 3 ? "end" : "middle"}" style="fill:var(--muted);font-size:11px">${lab}</text>`; }
   for (const s of SSER) {
     let d = "", prevY = null;
     pts.forEach((p, i) => { const v = p.s[s.key]; if (v == null) return; const xi = x(ts[i]).toFixed(1), yi = y(v).toFixed(1);
@@ -516,8 +529,7 @@ function drawStratChart() {
   }
   g += `<line id="scross" y1="${T}" y2="${H - B}" stroke="var(--muted)" visibility="hidden"/>`;
   svg.innerHTML = g;
-  const lastP = pts[pts.length - 1].s;
-  document.getElementById("slegend").innerHTML = SSER.map(s => `<span><i style="background:${s.color}"></i>${s.name}: <b>${fmt(lastP[s.key])}</b></span>`).join("");
+  document.getElementById("slegend").innerHTML = SSER.map(s => `<span><i style="background:${s.color}"></i>${s.name}: <b>${fmt(now[s.key] != null ? now[s.key] : pts[pts.length - 1].s[s.key])}</b></span>`).join("");
   const tip = document.getElementById("stip"), cross = svg.querySelector("#scross");
   svg.onmousemove = ev => {
     const rect = svg.getBoundingClientRect(), px = (ev.clientX - rect.left) * (W / rect.width);

@@ -96,16 +96,12 @@ def build(c):
         b["attribution"] = {k: len(v) for k, v in attrib.items()}
     d_view = strategy_d_block(c, quotes_all(c, t["id"], legs_of), legs_of, d_ledger, attrib["D"])
     d_cost = (d_view or {}).get("holdings_cost") or 0.0
-    # every exchange our tagged trades touched, for the SUSQ-mid fallback of strategy P&L
-    touched = sorted({f["ex"] for s in ("A", "B", "C", "D") for f in attrib.get(s, [])} - set(quotes))
-    for i in range(0, len(touched), 100):
-        r = c.get("/exchanges/prices", ids=",".join(touched[i:i + 100]), tournamentId=t["id"])
-        quotes.update({q["exchangeId"]: q for q in r["data"]})
-    s_pnl = strategy_pnl(attrib, exmap, quotes, getattr(config, "TAGS_SINCE", config.B_LIVE_SINCE))
+    s_series, s_state = strategy_series(fetch_all_trades(c), attrib)
+    s_now = strategy_now(c, t["id"], s_series, s_state, legs_of, quotes)
     d_fair_minus_cost = ((d_view or {}).get("holdings_fair") or 0.0) - d_cost if d_view and "holdings_fair" in d_view else 0.0
     return {
-        "strategy_pnl": s_pnl,
-        "strategy_pnl_since": getattr(config, "TAGS_SINCE", None),
+        "strategy_series": s_series,             # since the Cup began: A pairs 1 / legs at cost; B, C, D at cost (past)
+        "strategy_now": s_now,                   # now: A as above; B, C, D at the current SUSQ market value (mid)
         "d": d_view,
         "b": b,
         "activity": activity,
@@ -250,45 +246,126 @@ def quotes_all(c, tid, legs_of):
     return {q["exchangeId"]: q for q in r["data"]}
 
 
-def strategy_pnl(attrib, exmap, quotes, since):
-    """P&L of each strategy's own trades since order tagging began: its cash flow plus the shares those
-    trades left it (net of buys and sells, may be negative), every share valued at Kalshi fair (NO on
-    party x pays 1 - p_x; a pair is worth exactly 1) or, without a Kalshi market, at the SUSQ mid.
-    Linear valuation, so the strategies add up to the whole."""
-    races = {}
+ALLTRADES = Path(__file__).resolve().parents[1] / "state" / "trades_all.json"
+
+
+def fetch_all_trades(c, max_pages=60):
+    """Every trade since the Cup began (transactions endpoint, has BUY/SELL). Cached in state/ without
+    pruning: the first call pages through the whole history, later calls read about one page."""
+    try:
+        cache = json.loads(ALLTRADES.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        cache = {}
+    cursor = None
+    for _ in range(max_pages):
+        r = c.get(f"/tournaments/{config.TOURNAMENT_SLUG}/portfolio/transactions", limit=200, cursor=cursor)
+        page = [t for t in r.get("data", []) if t.get("event_type") == "trade"]
+        new = [t for t in page if t["event_id"] not in cache]
+        for t in new:
+            cache[t["event_id"]] = {k: t[k] for k in ("createdAt", "orderType", "quantity", "price", "marketTitle")}
+        pg = r.get("pagination", {})
+        if (page and len(new) < len(page)) or not pg.get("hasMore"):
+            break
+        cursor = pg["nextCursor"]
+    ALLTRADES.parent.mkdir(exist_ok=True)
+    ALLTRADES.write_text(json.dumps(cache), encoding="utf-8")
+    return list(cache.values())
+
+
+def strategy_series(trades, attrib, step_min=10):
+    """Value of each strategy since the Cup began, on a 10-minute grid plus now: its own cash flow plus
+    what it holds, valued like the main 'value at settlement' (a pair pays 1, a single leg at its cost).
+    Who traded: order tags since TAGS_SINCE (exact); before B went live everything was A; in between,
+    two-leg pair trades are A and single legs on Kalshi-mapped races are C (estimated)."""
+    from datetime import timedelta
+    tagged = {}
     for s in ("A", "B", "C", "D"):
         for f in attrib.get(s, []):
-            if f["ts"] >= since[:19]:
-                races.setdefault(exmap.get(f["ex"], ["?"])[0], set()).add(f["ex"])
-    tickers = {r: config.B_RACES[r] for r in races if r in config.B_RACES}
-    if getattr(config, "D_CONTROL_RACE", None) in races:            # D's control market: Kalshi's control price
-        tickers[config.D_CONTROL_RACE] = config.D_KALSHI_CONTROL
-    with ThreadPoolExecutor(max_workers=8) as pool:
-        fairs = dict(zip(tickers, pool.map(lambda r: kalshi.fair(tickers[r], 1.0), tickers)))
-    def value(ex):
-        race, party = exmap.get(ex, ["?", "?"])
-        k = fairs.get(race)
-        if k and k.get("p"):
-            return 1.0 - k["p"][party[0]]
-        x = quotes.get(ex, {})
-        if x.get("bestBid") is not None and x.get("bestAsk") is not None:
-            return 1.0 - (x["bestBid"] + x["bestAsk"]) / 2          # NO mid from the YES book
-        return None
-    out = {}
-    for s in ("A", "B", "C", "D"):
-        cash, net = 0.0, {}
-        for f in attrib.get(s, []):
-            if f["ts"] < since[:19] or f["price"] is None:
-                continue
-            sign = 1 if f["side"] == "BUY" else -1
-            cash -= sign * f["qty"] * f["price"]
-            net[f["ex"]] = net.get(f["ex"], 0) + sign * f["qty"]
-        held = 0.0
-        for ex, q in net.items():
-            v = value(ex)
-            if v is not None:
-                held += q * v
-        out[s] = {"pnl": round(cash + held, 2), "trades": sum(1 for f in attrib.get(s, []) if f["ts"] >= since[:19])}
+            tagged[(f["ts"][:19], f["race"], f["party"], f["qty"], round(f["price"] or 0, 4))] = s
+    legs = []
+    for t in trades:
+        g = TITLE.match(t["marketTitle"].strip())
+        legs.append({"ts": t["createdAt"][:19], "act": t["orderType"], "race": g.group(2) if g else t["marketTitle"],
+                     "party": g.group(1) if g else "?", "qty": abs(t["quantity"]), "px": t["price"]})
+    legs.sort(key=lambda x: x["ts"])
+    b_live = getattr(config, "B_LIVE_SINCE", "2100")[:19]
+    tags_since = getattr(config, "TAGS_SINCE", "2100")[:19]
+    by_sec = defaultdict(set)
+    for x in legs:
+        by_sec[(x["race"], x["ts"])].add(x["party"])
+    for x in legs:
+        key = (x["ts"], x["race"], x["party"], x["qty"], round(x["px"], 4))
+        if key in tagged:
+            x["s"] = tagged[key]
+        elif x["ts"] < b_live or x["ts"] >= tags_since:
+            x["s"] = "A"
+        else:                                              # 07:34-09:30: pairs are A, single legs on C races are C
+            x["s"] = "A" if len(by_sec[(x["race"], x["ts"])]) > 1 or x["race"] not in config.B_RACES else "C"
+    state = {s: {"cash": 0.0, "legs": defaultdict(lambda: [0.0, 0.0])} for s in ("A", "B", "C", "D")}
+
+    def value(st):
+        v = st["cash"]
+        races = defaultdict(dict)
+        for (race, party), (q, cost) in st["legs"].items():
+            races[race][party] = (q, cost)
+        for legs_ in races.values():
+            qs = [q for q, _ in legs_.values()]
+            pairs = min(qs) if len(legs_) == 2 and min(qs) > 0 else 0
+            v += pairs
+            for q, cost in legs_.values():
+                if q > 0:
+                    v += (q - pairs) * cost / q                  # the rest of the leg at its average cost
+                elif q < 0:
+                    v += q * (cost / q if q else 0)              # sold more than bought here: owed at sale cost
+        return v
+
+    out, i = [], 0
+    if not legs:
+        return out, state
+    t = datetime.fromisoformat(legs[0]["ts"] + "+00:00").replace(minute=(int(legs[0]["ts"][14:16]) // step_min) * step_min, second=0)
+    end = datetime.now(timezone.utc)
+    while True:
+        stamp = t.isoformat()[:19]
+        while i < len(legs) and legs[i]["ts"] <= stamp:
+            x = legs[i]; st = state[x["s"]]; leg = st["legs"][(x["race"], x["party"])]
+            if x["act"] == "BUY":
+                st["cash"] -= x["qty"] * x["px"]; leg[0] += x["qty"]; leg[1] += x["qty"] * x["px"]
+            else:
+                st["cash"] += x["qty"] * x["px"]
+                if leg[0] > 0:
+                    cut = min(x["qty"], leg[0]); leg[1] -= leg[1] * cut / leg[0]; leg[0] -= cut
+                    if x["qty"] > cut:
+                        leg[0] -= x["qty"] - cut; leg[1] -= (x["qty"] - cut) * x["px"]
+                else:
+                    leg[0] -= x["qty"]; leg[1] -= x["qty"] * x["px"]
+            i += 1
+        out.append({"t": t.isoformat(), **{s: round(value(state[s]), 2) for s in state}})
+        if t >= end:
+            break
+        t = min(t + timedelta(minutes=step_min), end)
+    return out, state
+
+
+def strategy_now(c, tid, series, state, legs_of, quotes):
+    """Value of each strategy now. A: like the main curve (a pair pays 1, single legs at cost). B, C, D:
+    current market value: cash flow + the NO shares each holds at the SUSQ mid (user, 2026-10-04)."""
+    if not series:
+        return {}
+    need = sorted({legs_of.get(race, {}).get(party[0]) for s in ("B", "C", "D")
+                   for (race, party), (q, _) in state[s]["legs"].items() if q} - {None} - set(quotes))
+    for i in range(0, len(need), 100):
+        r = c.get("/exchanges/prices", ids=",".join(need[i:i + 100]), tournamentId=tid)
+        quotes.update({x["exchangeId"]: x for x in r["data"]})
+    out = {"A": series[-1]["A"]}
+    for s in ("B", "C", "D"):
+        v = state[s]["cash"]
+        for (race, party), (q, cost) in state[s]["legs"].items():
+            x = quotes.get(legs_of.get(race, {}).get(party[0]), {})
+            if q and x.get("bestBid") is not None and x.get("bestAsk") is not None:
+                v += q * (1 - (x["bestBid"] + x["bestAsk"]) / 2)      # NO mid from the YES book
+            elif q:
+                v += cost                                            # no quote: keep it at cost
+        out[s] = round(v, 2)
     return out
 
 

@@ -20,8 +20,8 @@ fair = snap.get("value_fair")                     # C and D positions at Kalshi 
 if fair is None and b.get("leftover_fair_minus_cost") is not None:
     fair = round(snap["value_at_settlement"] + b["leftover_fair_minus_cost"], 2)
 point = {"t": snap["updated"], "settle": snap["value_at_settlement"], "mtm": snap["mark_to_market"], "fair": fair}
-if snap.get("strategy_pnl"):                      # P&L per strategy since order tagging (A, B, C, D)
-    point["s"] = {k: v["pnl"] for k, v in snap["strategy_pnl"].items()}
+if snap.get("strategy_now"):                      # value per strategy now: A settlement, B/C/D market value
+    point["s2"] = snap["strategy_now"]
 if "value_fair" in snap:
     point["d_fixed"] = True                       # D already counted by the snapshot (tools/fix_history_d.py skips it)
 hist.append(point)
