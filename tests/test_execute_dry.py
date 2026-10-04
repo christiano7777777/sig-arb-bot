@@ -688,6 +688,25 @@ def test_maker_quotes_both_legs_at_the_best_asks_when_kalshi_is_untrusted():
         assert abs(o["price"] - (1 - max(p for p, _ in fake.books[o["exchangeId"]][0]))) < 1e-9
 
 
+def test_maker_quotes_over_cap_race_up_to_the_allowance_then_stops():
+    # Delaware-like: 5,000 at risk with a tiny cap; maker may still offer pairs, NO_D side up to +500
+    import kalshi
+    fake, r = _maker_runner(37_588, CHEAP_OTHER)
+    config.MAKER_OVER_CAP, config.B_TOTAL_CAP_FRAC = 500, 0.01
+    kalshi.fair = lambda t, m: {"ok": True, "why": "", "p": {"D": 0.991, "R": 0.009}, "mid": {"D": 0.991, "R": 0.009}, "spread": {}}
+    ex_d, ex_r = fake.ex_of("Delaware Senate", "D"), fake.ex_of("Delaware Senate", "R")
+    fake.held = {ex_d: (-30_000, 3_000.0), ex_r: (-35_000, 29_000.0)}           # exposure 5,000, far over cap
+    r.b.step(r.quotes(), r.positions())
+    maker = [o for o in _b_orders(r) if o["idempotencyKey"].endswith("b-maker")]
+    assert {(o["exchangeId"], o["action"], o["quantity"]) for o in maker} >= {(ex_d, "sell", 500), (ex_r, "sell", 500)}
+    # a NO_D-only fill of 500 later: exposure 5,500 -> the allowance is used up, no more NO_D asks
+    fake.held[ex_d] = (-29_500, 2_950.0)
+    r.b.next_t = 0; r.sent.clear()
+    r.b.step(r.quotes(), r.positions())
+    assert not [o for o in _b_orders(r) if o["idempotencyKey"].endswith("b-maker") and o["exchangeId"] == ex_d
+                and o["action"] == "sell"]                                  # (a maker bid there is fine)
+
+
 def test_maker_not_on_small_holdings():
     fake, r = _maker_runner(300, CHEAP_OTHER)
     r.b.step(r.quotes(), r.positions())

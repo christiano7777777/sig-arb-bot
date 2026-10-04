@@ -100,6 +100,8 @@ MAKER_RACES = 6            # how many held races (largest by pairs) get pair quo
 MAKER_MIN_PAIRS = 500      # ... and only races holding at least this many pairs
 MAKER_CLIP = 500           # pairs per side per race
 MAKER_LIFE_S = 300         # quotes rest this long; re-posted only on expiry or when the best price moves
+MAKER_OVER_CAP = 500       # user (c): a one-leg fill on the favourite may add at most this much risk per race,
+                           # above max(race cap, lowest exposure seen since the maker started on the race)
 MAKER_MAX_ORDERS = 8       # maker writes per round (cancels + posts), inside the 30 writes/min budget
 B_MAX_ORDERS_PER_ROUND = 10  # keeps B inside the 30 writes/min account budget it shares with the arb
 
