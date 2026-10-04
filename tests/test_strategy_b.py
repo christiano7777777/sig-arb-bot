@@ -178,6 +178,18 @@ def test_no_skew_without_exposure():
     assert r["reservation"] == {"D": round(1 - 0.986, 4), "R": 0.986}
 
 
+def test_quote_behind_the_touch_does_not_starve_a_quote_at_the_touch():
+    # Minnesota Governor, live 2026-10-04 08:2x: the NO_R ask (0.965, behind the 0.88 best ask) used up
+    # the risk-reduction room, so a buy-back bid that could rest at the touch was dropped
+    pin(); config.B_SKEW = 0.02
+    books = {"D": {"bids": [(0.035, 500)], "asks": [(0.09, 2008)]},
+             "R": {"bids": [(0.875, 2241)], "asks": [(0.88, 4124)]}}
+    r = strategy_b.decide(books, {"D": 0.9515, "R": 0.0485}, {"D": 8_423, "R": 9_832}, room_total=1e9,
+                          cash=1_000, race_cap=2_916)
+    assert not orders(r, leg="R", side="sell", kind="quote")                  # behind the touch: not produced
+    assert orders(r, leg="D", side="buy", kind="quote")                       # the buy-back at the best bid survives
+
+
 def test_null_case_fair_prices_no_takes():
     # SUSQ priced at Kalshi fair: nothing is far enough from fair to take
     pin()

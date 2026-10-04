@@ -122,10 +122,12 @@ def decide(books, p, held, room_total, kalshi_ok=True, kalshi_jump=False, cash=I
                           "qty": qty, "prio": r[leg] - lv[0][0]})
         if kalshi_jump:
             continue                                   # fair value just moved: no resting quotes
+        # quotes are kept only AT the best price: one behind it cannot fill and must not claim cap,
+        # cash or risk-reduction room that another order could use (found in the 2026-10-04 demo)
         # quote: ask at/above the best ask (never undercut), and >= fair + QUOTE_EDGE
         if held[leg] >= 1 and asks:
             a = max(asks[0][0], up(r[leg] + config.B_QUOTE_EDGE))
-            if a < 1:
+            if a < 1 and abs(a - asks[0][0]) < 1e-9:
                 cands.append({"leg": leg, "side": "sell", "kind": "quote", "price": a, "qty": held[leg],
                               "prio": a - r[leg]})
         # quote: bid <= fair - QUOTE_EDGE, below the best ask, and our bid + other leg's best bid < 1
@@ -136,7 +138,8 @@ def decide(books, p, held, room_total, kalshi_ok=True, kalshi_jump=False, cash=I
             if books[other]["bids"]:
                 b = min(b, round(1.0 - books[other]["bids"][0][0] - TICK, 6))
             qty = INF if raises(leg, "buy") else max(held[other] - held[leg], 0)
-            if b > 0 and qty >= 1:
+            at_touch = not bids or b >= bids[0][0] - 1e-9          # joins or improves the best bid
+            if b > 0 and qty >= 1 and at_touch:
                 cands.append({"leg": leg, "side": "buy", "kind": "quote", "price": b, "qty": qty,
                               "prio": r[leg] - b})
     # 2) race cap (and room_total): takes first (a sure fill beats a quote that may never fill),
