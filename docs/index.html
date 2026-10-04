@@ -85,7 +85,8 @@
   <div class="tabs" role="tablist">
     <button role="tab" data-tab="overview">Overview</button>
     <button role="tab" data-tab="a"><span class="badge ba">A</span> Arbitrage</button>
-    <button role="tab" data-tab="b"><span class="badge bb">B</span> Market making</button>
+    <button role="tab" data-tab="m"><span class="badge bm">B</span> Pair maker</button>
+    <button role="tab" data-tab="b"><span class="badge bb">C</span> Kalshi market making</button>
   </div>
 
   <section data-panel="overview">
@@ -106,7 +107,7 @@
     <div class="split">
       <div class="panel pa"><div class="ptitle"><span class="badge ba">A</span> NO+NO arbitrage <span class="n">no directional risk</span></div>
         <div class="cards" id="sumA"></div></div>
-      <div class="panel pb"><div class="ptitle"><span class="badge bb">B</span> Kalshi market making <span class="n">directional, capped</span></div>
+      <div class="panel pb"><div class="ptitle"><span class="badge bb">C</span> Kalshi market making <span class="n">two-sided, inventory-limited</span> · <span class="badge bm">B</span> pair maker</div>
         <div class="cards" id="sumB"></div></div>
     </div>
   </section>
@@ -141,6 +142,20 @@
       "Value gained (all)" is the whole portfolio, both strategies.</p>
   </section>
 
+  <section data-panel="m" hidden>
+    <p class="strat"><span class="badge bm">B</span> Rests pair quotes on the largest held races: asks on both legs at the best
+      asks (sells pairs at the ask sum, only when a swap could redeploy at a gain), bids on both legs at the best bids
+      while the bid sum stays below 1. No Kalshi view; a one-leg fill may move a race at most 500 shares.</p>
+    <h2><span class="badge bm">B</span> Pair maker <span class="n">(resting pair quotes on the largest held races)</span></h2>
+    <div class="cards" id="mcards"></div>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Time</th><th>Side</th><th>Race</th><th>Leg</th><th>Shares</th><th>Price</th></tr></thead>
+        <tbody id="mrecent"></tbody>
+      </table>
+    </div>
+  </section>
+
   <section data-panel="b" hidden>
     <p class="strat" id="bintro"></p>
     <div class="cards" id="bcards"></div>
@@ -152,23 +167,16 @@
         <tbody id="brows"></tbody>
       </table>
     </div>
-    <h2>Kalshi trades <span class="n">(takes and quotes against Kalshi fair value)</span></h2>
+    <h2>Kalshi trades <span class="n">(C quotes; before 2026-10-04 12:40 also takes)</span></h2>
     <div class="tablewrap" style="margin-bottom:18px">
       <table>
         <thead><tr><th>Time</th><th>Kind</th><th>Side</th><th>Race</th><th>Leg</th><th>Shares</th><th>Price</th></tr></thead>
         <tbody id="brecent"></tbody>
       </table>
     </div>
-    <h2><span class="badge bm">M</span> Pair maker <span class="n">(resting pair quotes on the largest held races)</span></h2>
-    <div class="cards" id="mcards"></div>
-    <div class="tablewrap">
-      <table>
-        <thead><tr><th>Time</th><th>Side</th><th>Race</th><th>Leg</th><th>Shares</th><th>Price</th></tr></thead>
-        <tbody id="mrecent"></tbody>
-      </table>
-    </div>
-    <p class="note">Fair value of each leg = Kalshi mid with its overround removed. B sells the leg that is rich on SUSQ and buys
-      the cheap one, only where Kalshi gives the favourite ≥ the threshold; quotes never make the pair cheaper for others.
+    <p class="note">C quotes both sides of every held race (and bids in the 5 non-held races furthest below Kalshi) around a
+      reservation price = Kalshi fair (mid, overround removed) skewed against our inventory; no takes. Risk-adding quotes only
+      below 2,000 shares per race, so larger positions unwind through the risk-cutting quotes. Quotes never make the pair cheaper for others.
       At risk = shares that pay 0 if the underdog wins. Holding: the race still has arb pairs. Closing: no pairs left,
       the leftover is unwound slowly with skewed quotes. Trades are attributed exactly from our order tags since
       tagging began; earlier B trades are estimated (single legs on B races). Expected gain uses Kalshi's current
@@ -408,7 +416,7 @@ window.addEventListener("resize", drawChart);
 
 // ---------- tabs ----------
 function showTab(t) {
-  if (!["overview", "a", "b"].includes(t)) t = "overview";
+  if (!["overview", "a", "m", "b"].includes(t)) t = "overview";
   document.querySelectorAll(".tabs button").forEach(b => b.setAttribute("aria-selected", String(b.dataset.tab === t)));
   document.querySelectorAll("section[data-panel]").forEach(s => s.hidden = s.dataset.panel !== t);
   try { localStorage.setItem("tab", t); } catch (e) { /* storage may be blocked */ }

@@ -21,7 +21,7 @@ jobs:
         run: python -c "import tests.test_arb_math as t; n=[x for x in dir(t) if x.startswith('test_')]; [getattr(t, x)() for x in n]; print(len(n), 'passed')"
       - name: Executor tests against a fake API (no network, no orders)
         run: python tests/test_execute_dry.py
-      - name: Strategy B decisions
-        run: python tests/test_strategy_b.py
+      - name: Strategy B (pair maker) and C (Kalshi MM)
+        run: python tests/test_strategies.py
       - name: Client (order expiry, retries)
         run: python tests/test_client.py

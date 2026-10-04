@@ -205,14 +205,14 @@ class Runner:
     @staticmethod
     def strategy_of(label):
         """Which strategy sent an order, from its label: A = NO+NO arbitrage (pair buys, exits, swaps,
-        leg fixes), B = Kalshi-anchored trading (takes, quotes, closing), M = pair maker."""
+        leg fixes), B = pair maker, C = Kalshi-anchored market making (legacy b-take / b-quote too)."""
         tag = label.split(":")[-1]
         if tag.startswith("b-maker"):
-            return "M", "maker"
+            return "B", "maker"
+        if tag.startswith(("c-quote", "b-quote")):
+            return "C", "quote"
         if tag.startswith("b-take"):
-            return "B", "take"
-        if tag.startswith("b-quote"):
-            return "B", "quote"
+            return "C", "take"
         if tag.startswith("fix"):
             return "A", "fix"
         return "A", tag.replace("pair-", "")      # buy / sell (exit or swap)
@@ -396,43 +396,35 @@ class Runner:
         if q_swap < 1:
             print(f"  ROTATE {b.name}: no held race can sell at >= {sell_floor:.3f}")
             return True
-        budget = min(config.ROTATE_MAX_SPEND, self.cached_balance() - config.HARD_RESERVE)
         names = [a.name for a, _ in sales]
-        if budget >= q_swap * sum(lim_n):
-            print(f"  ROTATE {b.name}: BUY FIRST {q_swap} pairs at {lim_n} (<= {sum(lim_n):.3f}/pair), "
-                  f"then sell at >= {sell_floor:.3f} from {names}")
-            left = b.send_pair("buy", q_swap, lim_n, held_b)
-            for a, (qs, lim_s, res_s, held_a) in sales:
-                if left < 1 or STOP_FILE.exists():
-                    break
-                qs = min(qs, math.floor(left + 1e-9))
-                print(f"  ROTATE: sell {qs} pairs of {a.name} at {lim_s} (~{res_s['avg_proceeds']:.4f}/pair) "
-                      f"for {b.name}")
-                left -= a.send_pair("sell", qs, lim_s, held_a)
-            if left >= 1:
-                print(f"  ROTATE {b.name}: {left:g} new pairs not matched by a sale; kept (bought at an edge)")
-            return True
-        print(f"  ROTATE {b.name}: SELL FIRST (cash {max(budget, 0):.0f} < swap ~{q_swap * sum(lim_n):.0f}) "
-              f"{q_swap} pairs at >= {sell_floor:.3f} from {names}, then buy at <= {sum(lim_n):.3f}")
-        sold = 0
+        # Every swap must release cash (user, 2026-10-04): sell first, then buy at most the pairs sold,
+        # at <= the sale price - ROTATE_MIN_GAIN, paid only from this sale's proceeds. Cash released
+        # >= ROTATE_MIN_GAIN per pair swapped, and the whole sale if the buy does not happen.
+        # (Buy-first could leave extra pairs paid from cash when a sale fell short: removed.)
+        print(f"  ROTATE {b.name}: sell {q_swap} pairs at >= {sell_floor:.3f} from {names}, then buy at <= {sum(lim_n):.3f}")
+        sold, proceeds = 0, 0.0
         for a, (qs, lim_s, res_s, held_a) in sales:
             if STOP_FILE.exists():
                 break
             print(f"  ROTATE: sell {qs} pairs of {a.name} at {lim_s} (~{res_s['avg_proceeds']:.4f}/pair) "
                   f"to fund {b.name}")
-            sold += a.send_pair("sell", qs, lim_s, held_a)
+            got = a.send_pair("sell", qs, lim_s, held_a)
+            sold += got
+            proceeds += got * sum(lim_s)                # lower bound: every share fills at or above its limit
         if sold < 1:
             return True
-        # buy with what the sale freed, never above the price that keeps the swap gain
         self._cash = None
-        budget = self.cached_balance() - config.HARD_RESERVE
-        # min_cash=1: spend whatever the sale freed, even under the 50 "out of budget" trigger
-        p = b.plan(b.books(), min_edge=max(config.ROTATE_ENTRY_EDGE, 1.0 - sum(lim_n)), budget=budget, min_cash=1)
+        p = b.plan(b.books(), min_edge=max(config.ROTATE_ENTRY_EDGE, 1.0 - sum(lim_n)),
+                   budget=proceeds - 1e-6, min_cash=1)      # never more than this sale brought in
+        bought, cost = 0, 0.0
         if p is None:
-            print(f"  ROTATE {b.name}: sold {sold:g} pairs but the new pair is no longer <= {sum(lim_n):.3f}")
-            return True
-        qb, lim_b, _, held_b = p
-        b.send_pair("buy", min(qb, math.floor(sold + 1e-9)), lim_b, held_b)
+            print(f"  ROTATE {b.name}: sold {sold:g} pairs; the new pair is no longer <= {sum(lim_n):.3f}")
+        else:
+            qb, lim_b, _, held_b = p
+            qb = min(qb, math.floor(sold + 1e-9))
+            bought = b.send_pair("buy", qb, lim_b, held_b)
+            cost = bought * sum(lim_b)                  # upper bound: every share fills at or below its limit
+        print(f"  ROTATE {b.name}: cash released >= {proceeds - cost:.2f} (sold {sold:g}, bought {bought:g})")
         return True
 
 

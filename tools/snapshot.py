@@ -71,11 +71,11 @@ def build(c):
     attrib = tagged_fills(c, t["id"], tags)
     # strategy B trades: exact (tagged orders) since tagging began, estimated (single legs) before it
     since_tags = getattr(config, "TAGS_SINCE", "2100-01-01T00:00:00+00:00")
-    b_trades = [x for x in b_trades if x["ts"] < since_tags[:19]] + attrib["B"]
+    b_trades = [x for x in b_trades if x["ts"] < since_tags[:19]] + attrib["C"]   # C: Kalshi market making
     b_trades.sort(key=lambda x: x["ts"])
     b = strategy_b_block(races, quotes, b_trades, cash, pos)
     if b is not None:
-        b["maker"] = maker_block(attrib["M"])
+        b["maker"] = maker_block(attrib["B"])                                          # B: pair maker
         b["attribution"] = {k: len(v) for k, v in attrib.items()}
     return {
         "b": b,
@@ -185,7 +185,7 @@ def tagged_fills(c, tid, tags, max_pages=15):
     FILLS.parent.mkdir(exist_ok=True)
     FILLS.write_text(json.dumps(cache), encoding="utf-8")
     ex = exchange_map(c)
-    out = {"A": [], "B": [], "M": [], "untagged": []}
+    out = {"A": [], "B": [], "C": [], "untagged": []}
     for f in sorted(cache.values(), key=lambda f: f["filledAt"]):
         if f["filledAt"] < since[:19]:
             continue
@@ -194,7 +194,9 @@ def tagged_fills(c, tid, tags, max_pages=15):
         row = {"ts": f["filledAt"][:19] + "+00:00", "race": race, "party": party, "qty": abs(f["quantity"]),
                "price": round(f["price"], 4) if f["price"] is not None else None,
                "side": (tag[2] if tag else "?").upper(), "kind": tag[1] if tag else "?"}
-        out[tag[0] if tag else "untagged"].append(row)
+        # strategy from the order's kind (labels changed on 2026-10-04: maker = B, Kalshi take/quote = C)
+        strat = "untagged" if not tag else ("B" if tag[1] == "maker" else "C" if tag[1] in ("take", "quote") else "A")
+        out[strat].append(row)
     return out
 
 

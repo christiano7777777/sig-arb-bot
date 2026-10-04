@@ -59,12 +59,9 @@ EXIT_MIN_SUM = 1.000
 # sell held pairs to fund it, cheapest-to-exit first (highest NO-bid sum S), only if
 #   S - (ask sum of the new pair) >= ROTATE_MIN_GAIN      (net gain per pair swapped)
 # Swaps may sell below the held pair's cost (user, 2026-10-04); plain exits never do.
-# Buy first, then sell (2026-10-04): selling first left pairs sold below 1 with no buy when the new
-# race's book moved (6% of swapped pairs on 2026-10-03/04). The buy is paid from cash above
-# HARD_RESERVE, at most ROTATE_MAX_SPEND per swap, and sized to what the sellers' books can absorb;
-# the sale then refills the cash. If the sale falls short, the extra pairs are kept (bought at an edge).
+# Sell first, always (user, 2026-10-04): every swap must release cash. The buy is at most the pairs
+# sold, at <= the sale price - ROTATE_MIN_GAIN, paid only from that sale's proceeds.
 ROTATE_ENABLED = True
-ROTATE_MAX_SPEND = 2_000
 ROTATE_ENTRY_EDGE = MIN_EDGE  # user, 2026-10-04: swap whenever the swap itself earns > 0
 ROTATE_MIN_GAIN = 0.001   # user, 2026-10-04 (on the 0.005 tick this equals any gain > 0)
 ROTATE_TRIGGER_CASH = 50     # "out of budget" = less than this above the reserve
@@ -96,6 +93,13 @@ B_RACE_CAP = None          # per-race cap = total cap x the race's share of pair
 B_CLOSE_REF = 5_000        # closing: leftover size at which the buy-back bid is zero
 B_CLOSE_CLIP = 500         # closing: shares offered at the best ask per round (slow unwind)
 B_CLOSE_BID_RATIO = 0.5    # closing: buy-back bid = ratio * clip * (1 - leftover / B_CLOSE_REF)
+# --- Strategy C: Kalshi-anchored two-sided market making (user, 2026-10-04; strategy_c.py) ---
+C_LIMIT = 2_000            # directional inventory per race: risk-adding quotes only below this
+C_SKEW = 0.10              # reservation price moves this far from Kalshi fair at C_LIMIT of exposure
+C_SKEW_MAX = 0.25          # ... capped here (big legacy positions: strongest pull back toward flat)
+C_QUOTE_EDGE = 0.02        # quotes at least this far from the reservation price
+C_CLIP = 500               # shares per quote
+C_EXTRA_RACES = 5          # races we do not hold: bids on the cheap leg in the 5 with the biggest gap
 B_SKEW = 0.02             # holding: reservation price moves this far from fair at full race-cap exposure (user: slight)
 B_TOTAL_CAP_FRAC = 0.30    # max shares at risk over all races, as a fraction of portfolio value (user: 30%)
 MAKER_ENABLED = True       # pair maker (pair_maker.py): resting two-sided pair quotes on the largest held races
