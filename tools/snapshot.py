@@ -269,7 +269,8 @@ def strategy_d_block(c, quotes, legs_of, ledger, fills):
     for r, pr, d in zip(races, p, dl):
         legs = legs_of.get(r, {})
         rows.append({"race": r, "p_r": round(pr, 4), "delta": None if d is None else round(d, 4), "on_susq": len(legs) == 2,
-                     "target": None if d is None or not legs else round(n * d), "held": ledger.get(legs.get(hedge_leg), 0) if legs else 0,
+                     "target": None if d is None or len(legs) != 2 else round(n * d),
+                     "held": ledger.get(legs.get(hedge_leg), 0) if len(legs) == 2 else 0,
                      "book": noq(legs[hedge_leg]) if legs else None})
     rows.sort(key=lambda x: -(x["delta"] or 0))
     # P&L: cash flow of D's fills + what it holds now, at the SUSQ bid and at Kalshi fair

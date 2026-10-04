@@ -56,6 +56,11 @@ def plan(k_r, ctrl_book, deltas, hedge_books, ledger, cash):
             if leg == ctrl_leg:
                 n -= q
     if want != 0:
+        # hedges first: cash the current position still needs for its hedges is reserved before any add
+        # (live 2026-10-04: control grew to 3,589 while cash for its hedges ran out -> under-hedged)
+        deficit = sum(max(0.0, held_ctrl * d - ledger.get((r, hedge_leg), 0)) * (hedge_books[r][hedge_leg]["ask"] or 1.0)
+                      for r, d in deltas.items() if r in hedge_books)
+        spend -= deficit
         ask = ctrl_book[ctrl_leg]["ask"]
         fair = k_r if ctrl_leg == "D" else 1 - k_r               # NO on Dem control pays if Republicans control
         if ask is not None and fair - ask >= config.D_ENTRY_GAP - 1e-9:
@@ -66,6 +71,7 @@ def plan(k_r, ctrl_book, deltas, hedge_books, ledger, cash):
                 orders.append({"race": "ctrl", "leg": ctrl_leg, "side": "buy", "qty": add, "price": ask, "kind": "ctrl"})
                 spend -= add * ask
                 n += add
+        spend += deficit                                         # the reserved cash now pays the hedges
     out["target_n"] = max(n, 0)
     # hedges follow the control shares D actually holds (after this round's sales, before its buy fills):
     # a partly filled buy is hedged next round instead of over-hedged now

@@ -185,6 +185,15 @@ def test_d_short_direction_uses_the_other_legs():
     assert {o["leg"] for o in res["orders"] if o["kind"] == "hedge"} == {"D"}
 
 
+def test_d_pays_missing_hedges_before_adding_control():
+    # 1,000 control held, no hedges yet: they need 150 x 0.63 + 147 x 0.58 = 179.8. With 180 cash nothing is
+    # left for more control, and the hedges are placed in full (before the fix the add took the cash first)
+    pin_d()
+    res = strategy_d.plan(0.375, CTRL, DEL, HB, {("ctrl", "D"): 1_000}, cash=180)
+    assert not [o for o in res["orders"] if o["kind"] == "ctrl" and o["side"] == "buy"]
+    assert {(o["race"], o["qty"]) for o in res["orders"] if o["kind"] == "hedge"} == {("Texas Senate", 150), ("Maine Senate", 147)}
+
+
 def test_d_spends_no_more_than_its_cash():
     pin_d()
     res = strategy_d.plan(0.375, CTRL, DEL, HB, {}, cash=300)
