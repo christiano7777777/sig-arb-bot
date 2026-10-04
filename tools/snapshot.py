@@ -311,6 +311,13 @@ def trade_activity(c):
                "pairs": p["qty"], "price": round(p["sum"], 4)} for p in reversed(pairs[-25:])]
     # strategy B trades: single legs (not part of a pair) on B races since B went live
     since = datetime.fromisoformat(getattr(config, "B_LIVE_SINCE", "2100-01-01T00:00:00+00:00"))
+    # an arb pair whose legs filled in unequal sizes is not paired above: both parties traded in the same
+    # second -> not B (keeps the pre-tagging estimate free of arb legs)
+    both = defaultdict(set)
+    for i in range(len(legs)):
+        if i not in used:
+            both[(legs[i]["race"], legs[i]["ts"].replace(microsecond=0))].add(legs[i]["party"])
+    used |= {i for i in range(len(legs)) if len(both[(legs[i]["race"], legs[i]["ts"].replace(microsecond=0))]) > 1}
     b_trades = [{"ts": legs[i]["ts"].isoformat(timespec="seconds"), "race": legs[i]["race"], "party": legs[i]["party"],
                  "side": legs[i]["act"], "qty": legs[i]["qty"], "price": round(legs[i]["px"], 4)}
                 for i in range(len(legs)) if i not in used and legs[i]["ts"] >= since
