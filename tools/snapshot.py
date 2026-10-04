@@ -96,8 +96,16 @@ def build(c):
         b["attribution"] = {k: len(v) for k, v in attrib.items()}
     d_view = strategy_d_block(c, quotes_all(c, t["id"], legs_of), legs_of, d_ledger, attrib["D"])
     d_cost = (d_view or {}).get("holdings_cost") or 0.0
+    # every exchange our tagged trades touched, for the SUSQ-mid fallback of strategy P&L
+    touched = sorted({f["ex"] for s in ("A", "B", "C", "D") for f in attrib.get(s, [])} - set(quotes))
+    for i in range(0, len(touched), 100):
+        r = c.get("/exchanges/prices", ids=",".join(touched[i:i + 100]), tournamentId=t["id"])
+        quotes.update({q["exchangeId"]: q for q in r["data"]})
+    s_pnl = strategy_pnl(attrib, exmap, quotes, getattr(config, "TAGS_SINCE", config.B_LIVE_SINCE))
     d_fair_minus_cost = ((d_view or {}).get("holdings_fair") or 0.0) - d_cost if d_view and "holdings_fair" in d_view else 0.0
     return {
+        "strategy_pnl": s_pnl,
+        "strategy_pnl_since": getattr(config, "TAGS_SINCE", None),
         "d": d_view,
         "b": b,
         "activity": activity,
@@ -240,6 +248,48 @@ def quotes_all(c, tid, legs_of):
     ids = [e for n in names for e in legs_of.get(n, {}).values()]
     r = c.get("/exchanges/prices", ids=",".join(ids), tournamentId=tid) if ids else {"data": []}
     return {q["exchangeId"]: q for q in r["data"]}
+
+
+def strategy_pnl(attrib, exmap, quotes, since):
+    """P&L of each strategy's own trades since order tagging began: its cash flow plus the shares those
+    trades left it (net of buys and sells, may be negative), every share valued at Kalshi fair (NO on
+    party x pays 1 - p_x; a pair is worth exactly 1) or, without a Kalshi market, at the SUSQ mid.
+    Linear valuation, so the strategies add up to the whole."""
+    races = {}
+    for s in ("A", "B", "C", "D"):
+        for f in attrib.get(s, []):
+            if f["ts"] >= since[:19]:
+                races.setdefault(exmap.get(f["ex"], ["?"])[0], set()).add(f["ex"])
+    tickers = {r: config.B_RACES[r] for r in races if r in config.B_RACES}
+    if getattr(config, "D_CONTROL_RACE", None) in races:            # D's control market: Kalshi's control price
+        tickers[config.D_CONTROL_RACE] = config.D_KALSHI_CONTROL
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        fairs = dict(zip(tickers, pool.map(lambda r: kalshi.fair(tickers[r], 1.0), tickers)))
+    def value(ex):
+        race, party = exmap.get(ex, ["?", "?"])
+        k = fairs.get(race)
+        if k and k.get("p"):
+            return 1.0 - k["p"][party[0]]
+        x = quotes.get(ex, {})
+        if x.get("bestBid") is not None and x.get("bestAsk") is not None:
+            return 1.0 - (x["bestBid"] + x["bestAsk"]) / 2          # NO mid from the YES book
+        return None
+    out = {}
+    for s in ("A", "B", "C", "D"):
+        cash, net = 0.0, {}
+        for f in attrib.get(s, []):
+            if f["ts"] < since[:19] or f["price"] is None:
+                continue
+            sign = 1 if f["side"] == "BUY" else -1
+            cash -= sign * f["qty"] * f["price"]
+            net[f["ex"]] = net.get(f["ex"], 0) + sign * f["qty"]
+        held = 0.0
+        for ex, q in net.items():
+            v = value(ex)
+            if v is not None:
+                held += q * v
+        out[s] = {"pnl": round(cash + held, 2), "trades": sum(1 for f in attrib.get(s, []) if f["ts"] >= since[:19])}
+    return out
 
 
 def d_cost_basis(fills, until=None):

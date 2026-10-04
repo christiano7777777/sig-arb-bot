@@ -105,6 +105,14 @@
         <div class="tip" id="tip" hidden></div>
       </div>
     </div>
+    <h2>P&amp;L by strategy <span class="n" id="ssince"></span></h2>
+    <div class="chartcard" style="margin-bottom:18px">
+      <div class="legend" id="slegend"></div>
+      <div class="chartwrap">
+        <svg id="schart" style="width:100%;height:240px;display:block;touch-action:pan-y" role="img" aria-label="P&L by strategy over time"></svg>
+        <div class="tip" id="stip" hidden></div>
+      </div>
+    </div>
     <h2>By strategy</h2>
     <div class="split">
       <div class="panel pa"><div class="ptitle"><span class="badge ba">A</span> NO+NO arbitrage <span class="n">no directional risk</span></div>
@@ -470,13 +478,67 @@ function drawChart() {
   const leave = () => { tip.hidden = true; cross.setAttribute("visibility", "hidden"); };
   svg.onmousemove = move; svg.ontouchmove = move; svg.onmouseleave = leave; svg.ontouchend = leave;
 }
+// ---------- P&L by strategy (one line each; additive, same time window as the equity curve) ----------
+const SSER = [
+  { key: "A", name: "A arbitrage", color: "var(--s1)" }, { key: "B", name: "B pair maker", color: "var(--s4)" },
+  { key: "C", name: "C Kalshi MM", color: "var(--s3)" }, { key: "D", name: "D Senate stat arb", color: "var(--s2)" },
+];
+function drawStratChart() {
+  const svg = document.getElementById("schart");
+  if (!svg || svg.closest("section").hidden) return;
+  const W = svg.clientWidth || 600, H = 240, L = 58, R = 92, T = 10, B = 26;
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  const pts = windowPoints().filter(p => p.s);
+  if (snap && snap.strategy_pnl_since)
+    document.getElementById("ssince").textContent = `(each strategy's own trades since ${new Date(snap.strategy_pnl_since).toLocaleString()}, at Kalshi fair; they add up to the total)`;
+  if (pts.length < 2) {
+    svg.innerHTML = `<text x="${W / 2}" y="${H / 2}" text-anchor="middle" style="fill:var(--muted);font-size:12px">Recording started: one point every 2 min, the lines appear after the second.</text>`;
+    document.getElementById("slegend").innerHTML = SSER.map(s => `<span><i style="background:${s.color}"></i>${s.name}: <b>${snap && snap.strategy_pnl ? fmt(snap.strategy_pnl[s.key].pnl) : "–"}</b></span>`).join("");
+    return;
+  }
+  const ts = pts.map(p => new Date(p.t).getTime());
+  const vals = pts.flatMap(p => SSER.map(s => p.s[s.key])).filter(v => v != null).concat([0]);
+  let lo = Math.min(...vals), hi = Math.max(...vals); const pad = (hi - lo) * 0.08 || 20; lo -= pad; hi += pad;
+  const t0 = ts[0], t1 = ts[ts.length - 1];
+  const x = t => L + (W - L - R) * (t - t0) / ((t1 - t0) || 1), y = v => T + (H - T - B) * (1 - (v - lo) / (hi - lo));
+  let g = "";
+  for (const v of niceTicks(lo, hi)) g += `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="var(--grid)"/><text x="${L - 6}" y="${y(v) + 4}" text-anchor="end" style="fill:var(--muted);font-size:11px">${fmt(v, 0)}</text>`;
+  g += `<line x1="${L}" x2="${W - R}" y1="${y(0)}" y2="${y(0)}" stroke="var(--muted)" stroke-dasharray="4 4"/>`;
+  for (let k = 0; k <= 3; k++) { const t = t0 + (t1 - t0) * k / 3;
+    g += `<text x="${x(t)}" y="${H - 6}" text-anchor="${k === 0 ? "start" : k === 3 ? "end" : "middle"}" style="fill:var(--muted);font-size:11px">${new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</text>`; }
+  for (const s of SSER) {
+    let d = "", prevY = null;
+    pts.forEach((p, i) => { const v = p.s[s.key]; if (v == null) return; const xi = x(ts[i]).toFixed(1), yi = y(v).toFixed(1);
+      d += prevY == null ? `M${xi},${yi}` : `L${xi},${prevY}L${xi},${yi}`; prevY = yi; });
+    const last = pts[pts.length - 1].s[s.key];
+    g += `<path d="${d}" fill="none" stroke="${s.color}" stroke-width="2"/>` +
+         (last == null ? "" : `<circle cx="${x(t1)}" cy="${y(last)}" r="4" fill="${s.color}" stroke="var(--card)" stroke-width="2"/><text x="${W - R + 8}" y="${y(last) + 4}" style="fill:var(--text);font-size:11px">${s.key} ${fmt(last, 0)}</text>`);
+  }
+  g += `<line id="scross" y1="${T}" y2="${H - B}" stroke="var(--muted)" visibility="hidden"/>`;
+  svg.innerHTML = g;
+  const lastP = pts[pts.length - 1].s;
+  document.getElementById("slegend").innerHTML = SSER.map(s => `<span><i style="background:${s.color}"></i>${s.name}: <b>${fmt(lastP[s.key])}</b></span>`).join("");
+  const tip = document.getElementById("stip"), cross = svg.querySelector("#scross");
+  svg.onmousemove = ev => {
+    const rect = svg.getBoundingClientRect(), px = (ev.clientX - rect.left) * (W / rect.width);
+    const t = t0 + (px - L) / (W - L - R) * ((t1 - t0) || 1);
+    let i = 0, best = Infinity; ts.forEach((v, k) => { const dd = Math.abs(v - t); if (dd < best) { best = dd; i = k; } });
+    cross.setAttribute("x1", x(ts[i])); cross.setAttribute("x2", x(ts[i])); cross.setAttribute("visibility", "visible");
+    tip.hidden = false;
+    tip.innerHTML = `${new Date(pts[i].t).toLocaleString()}<br>` + SSER.map(s => `<i style="background:${s.color}"></i>${s.key}: ${fmt(pts[i].s[s.key])}`).join("<br>");
+    tip.style.left = Math.min(Math.max(x(ts[i]) / W * rect.width + 12, 0), rect.width - tip.offsetWidth - 4) + "px";
+  };
+  svg.onmouseleave = () => { tip.hidden = true; cross.setAttribute("visibility", "hidden"); };
+}
+
 document.getElementById("winbar").addEventListener("click", ev => {
   const btn = ev.target.closest("button");
   if (!btn) return;
   winHours = +btn.dataset.w;
   drawChart();
+  drawStratChart();
 });
-window.addEventListener("resize", drawChart);
+window.addEventListener("resize", () => { drawChart(); drawStratChart(); });
 
 // ---------- tabs ----------
 function showTab(t) {
@@ -485,7 +547,7 @@ function showTab(t) {
   document.querySelectorAll("section[data-panel]").forEach(s => s.hidden = s.dataset.panel !== t);
   try { localStorage.setItem("tab", t); } catch (e) { /* storage may be blocked */ }
   if (location.hash !== "#" + t) history.replaceState(null, "", "#" + t);
-  if (t === "overview") drawChart();
+  if (t === "overview") { drawChart(); drawStratChart(); }
 }
 document.querySelector(".tabs").addEventListener("click", ev => {
   const b = ev.target.closest("button[data-tab]"); if (b) showTab(b.dataset.tab);
@@ -511,6 +573,7 @@ async function load() {
   } catch (e) { /* curve keeps its last data */ }
   renderActivity();
   drawChart();
+  drawStratChart();
 }
 load();
 setInterval(load, 60000);
