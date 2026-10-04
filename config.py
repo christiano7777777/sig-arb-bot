@@ -114,7 +114,7 @@ D_RACES = ["Alabama", "Alaska", "Arkansas", "Colorado", "Delaware", "Florida", "
            "Virginia", "West Virginia", "Wyoming"]   # the 35 seats up in 2026 (+ " Senate")
 D_KALSHI_EXTRA = {"Montana Senate": "SENATEMT-26-R", "Nebraska Senate": "SENATENE-26-R",
                   "Ohio Senate": "SENATEOHS-26-R"}   # P(R wins) for the 3 races SUSQ does not list
-D_LIVE_SINCE = "2026-10-04T13:39:00+00:00"   # D's fills counted from here (ledger rebuild)
+D_LIVE_SINCE = "2026-10-04T13:30:00+00:00"   # D's fills counted from here (ledger rebuild)
 
 # --- Strategy C: Kalshi-anchored two-sided market making (user, 2026-10-04; strategy_c.py) ---
 C_LIMIT = 2_000            # directional inventory per race: risk-adding quotes only below this
