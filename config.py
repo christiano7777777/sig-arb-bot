@@ -73,6 +73,7 @@ ROTATE_TRIGGER_CASH = 50     # "out of budget" = less than this above the reserv
 # swaps, so the next exit check is never more than a few seconds away.
 MAX_ENTRIES_PER_POLL = 4
 MAX_ROTATIONS_PER_POLL = 2
+ROTATE_MAX_PER_MIN = 6       # with ~1 poll/s: at most this many swap attempts a minute (30 writes/min budget)
 
 # --- Strategy B: Kalshi-anchored trading on held races (user, 2026-10-04) ---
 # Fair value of each leg from Kalshi's mid (overround removed). Sell the leg that is rich on SUSQ,

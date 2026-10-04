@@ -23,3 +23,5 @@ jobs:
         run: python tests/test_execute_dry.py
       - name: Strategy B decisions
         run: python tests/test_strategy_b.py
+      - name: Client (order expiry, retries)
+        run: python tests/test_client.py

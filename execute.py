@@ -89,6 +89,7 @@ class Runner:
         self._pos, self._pos_t = None, 0.0            # positions cache for the poll (orders re-read fresh)
         self._cash_t = 0.0
         self._no_swap = {}                            # swap attempts that found nothing (see poll)
+        self._swaps = []                              # times of recent swap attempts (ROTATE_MAX_PER_MIN)
         if getattr(config, "REALTIME_ENABLED", False):
             self.feed = Feed(SusqClient(), self.tour["id"])    # own client: the token mint is its only call
             self.feed.start()
@@ -302,6 +303,10 @@ class Runner:
                            self._pos_t)
                     if self._no_swap.get(key, 0) > time.time() - 30:
                         continue
+                    self._swaps = [t for t in self._swaps if t > time.time() - 60]
+                    if len(self._swaps) >= config.ROTATE_MAX_PER_MIN:
+                        return                      # write budget: B, maker and fixes need room too
+                    self._swaps.append(time.time())
                     if self.rotate(b, q, held):
                         done += 1
                         self._no_swap[key] = time.time()   # cleared by any change in the key
@@ -656,12 +661,19 @@ class Basket:
                   f"buy {pm} @{buy_px} -> {reform_loss:+.4f}/sh, sell {pe} @{sell_px} -> {unwind_loss:+.4f}/sh")
             if reform_loss == inf and unwind_loss == inf:
                 break
-            if reform_loss <= unwind_loss:
-                r = self.leg_order(m, "buy", x, ceil_to_tick(buy_px, config.TICK), "fix-buy")
-                k = m
-            else:
-                r = self.leg_order(e, "sell", x, floor_to_tick(sell_px, config.TICK), "fix-sell")
-                k = e
+            try:
+                if reform_loss <= unwind_loss:
+                    r = self.leg_order(m, "buy", x, ceil_to_tick(buy_px, config.TICK), "fix-buy")
+                    k = m
+                else:
+                    r = self.leg_order(e, "sell", x, floor_to_tick(sell_px, config.TICK), "fix-sell")
+                    k = e
+            except ApiError as err:
+                if 400 <= err.status < 500 and err.status not in (408, 429):
+                    print(f"    fix order rejected, nothing traded ({err}); retrying")
+                    held = self.no_shares()
+                    continue                    # next try re-reads the book and re-prices
+                raise
             if r is None:                                 # dry run
                 return
             if r.get("open"):

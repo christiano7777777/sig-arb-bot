@@ -67,9 +67,11 @@ class SusqClient:
             f.write(line + "\n")
 
     # ---- requests ------------------------------------------------------
-    def _send(self, method, path, params=None, body=None):
+    def _send(self, method, path, params=None, body=None, before_send=None):
         url = f"{self.base_url}{path}"
         self._throttle("read" if method == "GET" else "write")
+        if before_send is not None:
+            before_send()                          # e.g. re-stamp order expiries after the budget wait
         t0 = time.time()
         try:
             resp = self.session.request(method, url, params=params, json=body, timeout=30)
@@ -111,11 +113,32 @@ class SusqClient:
         and 5xx. Order bodies carry an idempotencyKey, and every retry sends the identical body,
         so a retry can never place a second order. Other 4xx errors are raised immediately.
         """
-        delay = 0.5
+        # Order expiries are short (seconds). The write budget can hold an order back longer than that
+        # (live 2026-10-04: "expirationDate must be in the future"), so expiries are re-stamped right
+        # before sending: on the first attempt, and after a 429 (which placed nothing, so it also gets a
+        # new idempotency key). Retries after a 5xx / in-flight keep the identical body, as the docs say.
+        legs = (body.get("legs") or [body]) if isinstance(body, dict) else []
+        ttl = []
+        for leg in legs:
+            exp = leg.get("expirationDate")
+            if exp:
+                left = dt.datetime.fromisoformat(exp.replace("Z", "+00:00")).timestamp() - time.time()
+                ttl.append((leg, max(left, 2.0)))
+        key0 = body.get("idempotencyKey") if isinstance(body, dict) else None
+
+        def restamp():
+            now = dt.datetime.fromtimestamp(time.time(), dt.timezone.utc)
+            for leg, sec in ttl:
+                leg["expirationDate"] = (now + dt.timedelta(seconds=sec)).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+        delay, fresh = 0.5, True
         for attempt in range(1, max_tries + 1):
             try:
-                return self._send("POST", path, body=body)
+                return self._send("POST", path, body=body, before_send=restamp if (fresh and ttl) else None)
             except ApiError as e:
+                fresh = e.status == 429            # nothing was placed: next try may change the payload
+                if fresh and key0:
+                    body["idempotencyKey"] = f"{key0}-r{attempt}"
                 retryable = e.status == 429 or e.status >= 500 or e.code == "REQUEST_IN_FLIGHT"
                 if not retryable or attempt == max_tries:
                     raise
