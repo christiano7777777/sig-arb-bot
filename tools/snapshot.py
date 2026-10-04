@@ -16,6 +16,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))   # project root
 import config  # noqa: E402
 import kalshi  # noqa: E402
+import strategy_c  # noqa: E402
 from susq_client import SusqClient  # noqa: E402
 
 TITLE = re.compile(r"^Will the (\w+) Party win the (.+?)\??$")
@@ -33,6 +34,12 @@ def build(c):
             races[name][party] = p
 
     ids = [p["exchangeId"] for legs in races.values() for p in legs.values()]
+    # both legs of every held C race (C quotes the leg we do not hold too)
+    exmap = exchange_map(c)
+    legs_of = {}
+    for ex, (race, party) in exmap.items():
+        legs_of.setdefault(race, {})[party[0]] = ex
+    ids = sorted(set(ids) | {e for race in races if race in config.B_RACES for e in legs_of.get(race, {}).values()})
     quotes = {}
     for i in range(0, len(ids), 100):
         r = c.get("/exchanges/prices", ids=",".join(ids[i:i + 100]), tournamentId=t["id"])
@@ -74,6 +81,8 @@ def build(c):
     b_trades = [x for x in b_trades if x["ts"] < since_tags[:19]] + attrib["C"]   # C: Kalshi market making
     b_trades.sort(key=lambda x: x["ts"])
     b = strategy_b_block(races, quotes, b_trades, cash, pos)
+    if b is not None:
+        add_c_view(b, quotes, legs_of, cash)
     if b is not None:
         b["maker"] = maker_block(attrib["B"])                                          # B: pair maker
         b["attribution"] = {k: len(v) for k, v in attrib.items()}
@@ -207,6 +216,40 @@ def maker_block(fills):
     win = {f"{h}h": {"fills": sum(1 for f in fills if age_h(f) <= h),
                      "shares": sum(f["qty"] for f in fills if age_h(f) <= h)} for h in WINDOWS_H}
     return {**win, "recent": fills[-25:][::-1]}
+
+
+def add_c_view(b, quotes, legs_of, cash):
+    """Strategy C's view of each held race (strategy_c.py, the same code the bot runs): state, exposure vs
+    C_LIMIT, Kalshi fair and SUSQ book on both legs, reservation prices, and the quotes C wants now."""
+    def no_book(ex):
+        x = quotes.get(ex, {})
+        return {"bids": [(round(1 - x["bestAsk"], 4), 1)] if x.get("bestAsk") is not None else [],
+                "asks": [(round(1 - x["bestBid"], 4), 1)] if x.get("bestBid") is not None else []}
+    spend = max(0.0, cash - config.HARD_RESERVE)
+    total, above = 0.0, 0.0
+    for row in b["races"]:
+        legs = legs_of.get(row["race"], {})
+        if row["p_favourite"] is None or len(legs) != 2:
+            row["c"] = {"state": "no Kalshi" if row["p_favourite"] is None else "?"}
+            continue
+        fav = row["favourite"]
+        p = {fav: row["p_favourite"], ("R" if fav == "D" else "D"): 1 - row["p_favourite"]}
+        books = {x: no_book(legs[x]) for x in "DR"}
+        h = {"D": row["no_d"], "R": row["no_r"]}
+        res = strategy_c.quotes(books, p, h, spend)
+        e = res["exposure"]
+        total += max(e, 0); above += max(e - config.C_LIMIT, 0)
+        adds = any(o["adds"] for o in res["orders"]); cuts = any(not o["adds"] for o in res["orders"])
+        state = ("over limit: cutting only" if e >= config.C_LIMIT else "two-sided" if adds and cuts
+                 else "adding" if adds else "cutting" if cuts else "idle (SUSQ near fair)")
+        row["c"] = {"state": state, "exposure": round(e), "limit": config.C_LIMIT,
+                    "fair": {x: round(1 - p[x], 4) for x in "DR"},
+                    "book": {x: {"bid": books[x]["bids"][0][0] if books[x]["bids"] else None,
+                                 "ask": books[x]["asks"][0][0] if books[x]["asks"] else None} for x in "DR"},
+                    "reservation": res["reservation"],
+                    "quotes": [{k: o[k] for k in ("leg", "side", "price", "qty", "adds")} for o in res["orders"]]}
+    b["c_summary"] = {"exposure": round(total), "above_limit": round(above), "limit": config.C_LIMIT,
+                      "skew": config.C_SKEW, "quote_edge": config.C_QUOTE_EDGE, "extra_races": config.C_EXTRA_RACES}
 
 
 def strategy_b_block(races, quotes, b_trades, cash, pos):

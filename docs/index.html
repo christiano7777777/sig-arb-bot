@@ -162,8 +162,8 @@
     <h2>Races</h2>
     <div class="tablewrap" style="margin-bottom:18px">
       <table>
-        <thead><tr><th>Race</th><th>Mode</th><th>NO Dem</th><th>NO Rep</th><th>Pairs</th><th>At risk</th><th>Race cap</th>
-          <th>Kalshi favourite</th><th>Leftover leg</th><th>SUSQ bid</th><th>Kalshi fair</th></tr></thead>
+        <thead><tr><th>Race</th><th>C state</th><th>At risk</th><th>Pairs</th><th>Kalshi favourite</th>
+          <th>NO Dem: bid / ask</th><th>NO Rep: bid / ask</th><th>Reservation (NO)</th><th style="text-align:left">C quotes now</th></tr></thead>
         <tbody id="brows"></tbody>
       </table>
     </div>
@@ -225,7 +225,7 @@ function render(d) {
          a24.buy_edge == null ? "" : `avg buy edge ${fmt(a24.buy_edge, 4)}`);
   const b = d.b;
   document.getElementById("sumB").innerHTML = !b ? card("Strategy B", "off", "") :
-    card("At risk", fmt(b.total_at_risk, 0), `of ${fmt(b.cap_total, 0)} cap · pay 0 if the underdog wins`) +
+    card("C: shares at risk", fmt((b.c_summary || {}).exposure, 0), `${fmt((b.c_summary || {}).above_limit, 0)} above the ${fmt((b.c_summary || {}).limit, 0)}/race limit, unwinding`) +
     card("Expected gain vs Kalshi", (b.expected_gain_vs_kalshi >= 0 ? "+" : "") + fmt(b.expected_gain_vs_kalshi), "estimate, not locked",
          b.expected_gain_vs_kalshi >= 0 ? "pos" : "neg") +
     card("Pair maker, last 24h", fmt(((b.maker || {})["24h"] || {}).fills || 0, 0) + " fills", `${fmt(((b.maker || {})["24h"] || {}).shares || 0, 0)} shares`);
@@ -244,22 +244,30 @@ function render(d) {
 }
 
 function renderB(b) {
-  if (!b) { document.getElementById("bintro").textContent = "Strategy B is off."; return; }
-  document.getElementById("bintro").textContent =
-    `Live since ${new Date(b.live_since).toLocaleString()} · takes ≥ ${b.take_edge} from fair, quotes ≥ ${b.quote_edge} · favourite ≥ ${b.min_favourite} on Kalshi.`;
+  if (!b) { document.getElementById("bintro").textContent = "Strategy C is off."; return; }
+  const cs = b.c_summary || {};
+  document.getElementById("bintro").innerHTML =
+    `<span class="badge bb">C</span> Quotes both sides around Kalshi fair value, skewed against inventory (${fmt(cs.skew, 2)} at ${fmt(cs.limit, 0)} shares);
+     no takes. Adds risk only below ${fmt(cs.limit, 0)} shares per race; above it only risk-cutting quotes, which unwind older positions.
+     Also bids in the ${cs.extra_races || 5} races we do not hold that sit furthest below Kalshi.`;
   const g = b.expected_gain_vs_kalshi;
   document.getElementById("bcards").innerHTML =
-    card("At risk (all races)", fmt(b.total_at_risk, 0), `cap ${fmt(b.cap_total, 0)} total · per race: share of pairs held`) +
-    card("Expected gain vs Kalshi", (g >= 0 ? "+" : "") + fmt(g), "B trades valued at current Kalshi fair", g >= 0 ? "pos" : "neg") +
-    card("Value with B at Kalshi fair", fmt(snap.value_at_settlement + (b.leftover_fair_minus_cost || 0)),
-         `${(b.leftover_fair_minus_cost >= 0 ? "+" : "") + fmt(b.leftover_fair_minus_cost)} vs leftovers at cost`) +
-    card("Races", b.races.length, ["holding", "closing"].map(m => `${b.races.filter(r => r.mode === m).length} ${m}`).join(" · "));
-  document.getElementById("brows").innerHTML = b.races.map(r => `<tr><td>${esc(r.race)}</td>
-    <td><span class="mode m-${r.mode}">${r.mode}</span></td><td>${fmt(r.no_d, 0)}</td><td>${fmt(r.no_r, 0)}</td>
-    <td>${fmt(r.pairs, 0)}</td><td>${r.at_risk < 0 ? `${fmt(-r.at_risk, 0)} <span class="n">if fav. wins</span>` : fmt(r.at_risk, 0)}</td><td>${fmt(r.cap, 0)}</td>
-    <td>${r.favourite ? (r.favourite === "D" ? "Dem " : "Rep ") + fmt(r.p_favourite * 100, 1) + "%" : `<span class="n">${esc(r.kalshi_why || "–")}</span>`}</td>
-    <td>${r.leftover_leg ? `${fmt(r.leftover, 0)} NO ${r.leftover_leg === "D" ? "Dem" : "Rep"}` : "–"}</td>
-    <td>${fmt(r.leftover_bid, 3)}</td><td>${fmt(r.leftover_fair, 3)}</td></tr>`).join("");
+    card("Shares at risk", fmt(cs.exposure, 0), `pay 0 if the underdog wins · limit ${fmt(cs.limit, 0)} per race`) +
+    card("Above the limit", fmt(cs.above_limit, 0), "being unwound by risk-cutting quotes") +
+    card("Expected gain vs Kalshi", (g >= 0 ? "+" : "") + fmt(g), "C trades at current Kalshi fair (estimate)", g >= 0 ? "pos" : "neg") +
+    card("Value with C positions at Kalshi fair", fmt(snap.value_at_settlement + (b.leftover_fair_minus_cost || 0)),
+         `${(b.leftover_fair_minus_cost >= 0 ? "+" : "") + fmt(b.leftover_fair_minus_cost)} vs at cost`);
+  const leg = x => x === "D" ? "Dem" : "Rep";
+  const legCell = (c, x) => c.book ? `${fmt(c.book[x].bid, 3)} / ${fmt(c.book[x].ask, 3)} <span class="n">fair ${fmt(c.fair[x], 3)}</span>` : "–";
+  document.getElementById("brows").innerHTML = b.races.map(r => {
+    const c = r.c || {};
+    const qs = (c.quotes || []).map(q => `<span class="k-${q.side.toUpperCase()}">${q.side}</span> ${fmt(q.qty, 0)} NO ${leg(q.leg)} @ ${fmt(q.price, 3)}${q.adds ? "" : ' <span class="n">(cuts)</span>'}`).join("<br>") || '<span class="n">none</span>';
+    const exp = c.exposure == null ? "–" : c.exposure < 0 ? `${fmt(-c.exposure, 0)} <span class="n">if fav. wins</span>` : fmt(c.exposure, 0);
+    return `<tr><td>${esc(r.race)}</td><td>${esc(c.state || "–")}</td><td>${exp}</td><td>${fmt(r.pairs, 0)}</td>
+      <td>${r.favourite ? leg(r.favourite) + " " + fmt(r.p_favourite * 100, 1) + "%" : esc(r.kalshi_why || "–")}</td>
+      <td>${legCell(c, "D")}</td><td>${legCell(c, "R")}</td>
+      <td>${c.reservation ? `D ${fmt(c.reservation.D, 3)} · R ${fmt(c.reservation.R, 3)}` : "–"}</td><td style="text-align:left">${qs}</td></tr>`;
+  }).join("");
   const tradeRow = (t, kind) => `<tr><td>${new Date(t.ts).toLocaleTimeString()}</td>${kind ? `<td>${esc(t.kind || "estimated")}</td>` : ""}
       <td class="k-${t.side}">${t.side.toLowerCase()}</td><td>${esc(t.race)}</td><td>NO ${esc(String(t.party).slice(0, 3))}</td>
       <td>${fmt(t.qty, 0)}</td><td>${fmt(t.price, 4)}</td></tr>`;
