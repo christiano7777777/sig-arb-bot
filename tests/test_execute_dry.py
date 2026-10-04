@@ -894,6 +894,34 @@ def test_unknown_outcome_still_halts():
         pass
 
 
+def test_fix_that_succeeds_on_the_last_try_does_not_halt():
+    # live 2026-10-04 12:05: try 3 restored the legs, but the loop only checked at the top of a try
+    fake = FakeClient({"Kansas Senate": {"D": ([(0.875, 9000)], [(0.88, 9000)]), "R": ([(0.11, 9000)], [(0.115, 9000)])}})
+    r = make_runner(fake); r.live = True
+    r.cancel_all = lambda exs: None
+    b = basket(r, "Kansas Senate")
+    b.leg_order = lambda k, action, qty, price, tag: {"open": False}
+    config.FIX_MAX_TRIES = 3
+    calls = {"n": 0}
+    def shares():
+        calls["n"] += 1
+        return [100, 100] if calls["n"] >= 3 else [100, 90]     # fixed only by the third order
+    b.no_shares = shares
+    b.fix_imbalance([100, 90], "buy", [0.125, 0.885], 1.01)    # must return without Halt
+    assert not execute.STOP_FILE.exists()
+
+
+def test_own_order_drops_the_pushed_book():
+    fake = FakeClient({"Kansas Senate": NO_EDGE})
+    r = make_runner(fake)
+    f = _feed(); r.feed = f
+    f.on_market_batch("7", _batch(1, 0, [_bk(1101, 10, [(0.5, 100)], [(0.51, 100)])]))
+    r.live = True; r.c = type("C", (), {"post": lambda self, p, b: {"data": {"orderId": 1}}})()
+    execute.Runner.order(r, "/orders", {"exchangeId": "1101", "action": "sell", "quantity": 1, "price": 0.5},
+                         "Kansas Senate:fix-sell")                     # the real method, not the test capture
+    assert f.book("1101") is None                               # next read goes to REST
+
+
 def test_arb_trade_allowed_on_b_race_with_unequal_legs():
     fake, r = _b_runner(37_588, 32_588, balance=1_000)
     b = basket(r, "Delaware Senate")

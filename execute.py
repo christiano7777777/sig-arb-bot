@@ -193,7 +193,12 @@ class Runner:
             return None
         self.touched.update(l["exchangeId"] for l in body.get("legs", [body]))
         self._pos_t = 0.0                       # our own order: the next poll re-reads positions
-        r = self.c.post(path, body)
+        try:
+            r = self.c.post(path, body)
+        finally:
+            if self.feed is not None:            # our own trade changes the book before the next push:
+                for l in body.get("legs", [body]):   # read REST for it until a newer push arrives
+                    self.feed._drop_exchange(l["exchangeId"])
         self.tag_orders(r, body, label)
         return r
 
@@ -679,6 +684,9 @@ class Basket:
             if r.get("open"):
                 self.r.cancel_all([self.ex[k]])
             held = self.no_shares()
+        if abs(held[0] - held[1] - base) <= 1e-9:      # the last try fixed it (live halt 12:05: it had)
+            print("    legs back to their intended balance")
+            return
         STOP_FILE.write_text(f"halted {now_plus(0)}: {self.name}: legs still unequal {held}\n")
         raise Halt(f"{self.name}: legs still unequal {held} after {config.FIX_MAX_TRIES} tries "
                    "(book too thin). Bot halted; STOP file written. Decide by hand.")
