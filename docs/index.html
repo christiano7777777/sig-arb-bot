@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Arb Portfolio</title>
+<title>Arb + Market Making</title>
 <style>
   :root {
     --bg: #f7f7f5; --card: #ffffff; --text: #1d1d1f; --muted: #6b6b70; --line: #e4e4e0;
@@ -58,11 +58,15 @@
   .tip i { display: inline-block; width: 10px; height: 2px; vertical-align: middle; margin-right: 5px; }
   .k-exit { color: var(--good); font-weight: 600; } .k-swap { color: var(--accent); font-weight: 600; }
   .k-buy { color: var(--text); }
+  .k-SELL { color: var(--good); font-weight: 600; } .k-BUY { color: var(--accent); font-weight: 600; }
+  .mode { font-size: 12px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); }
+  .m-holding { color: var(--accent); } .m-closing { color: var(--warn); } .m-left { color: var(--muted); }
+  .strat { color: var(--muted); font-size: 13px; margin: -2px 0 10px; }
 </style>
 </head>
 <body>
 <main>
-  <h1>NO+NO arbitrage portfolio</h1>
+  <h1>NO+NO arbitrage + Kalshi-anchored market making</h1>
   <div class="sub" id="status">Loading…</div>
   <div id="warnings"></div>
   <div class="cards" id="cards"></div>
@@ -78,6 +82,8 @@
       <div class="tip" id="tip" hidden></div>
     </div>
   </div>
+  <h2>Strategy A: NO+NO arbitrage</h2>
+  <p class="strat">Buys one NO share of each party (pays ≥ 1 whoever wins) below 1; exits at ≥ 1; swaps into bigger edges. No directional risk.</p>
   <h2>Trading activity</h2>
   <div class="tablewrap" style="margin-bottom:18px">
     <table>
@@ -102,6 +108,31 @@
       <tbody id="recent"></tbody>
     </table>
   </div>
+  <h2>Strategy B: Kalshi-anchored market making</h2>
+  <p class="strat" id="bintro"></p>
+  <div class="cards" id="bcards"></div>
+  <div class="tablewrap" style="margin-bottom:18px">
+    <table>
+      <thead><tr><th>Race</th><th>Mode</th><th>NO Dem</th><th>NO Rep</th><th>Pairs</th><th>At risk</th>
+        <th>Kalshi favourite</th><th>Leftover leg</th><th>SUSQ bid</th><th>Kalshi fair</th></tr></thead>
+      <tbody id="brows"></tbody>
+    </table>
+  </div>
+  <h2>Strategy B trades</h2>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>Time</th><th>Side</th><th>Race</th><th>Leg</th><th>Shares</th><th>Price</th></tr></thead>
+      <tbody id="brecent"></tbody>
+    </table>
+  </div>
+  <p class="note">
+    Strategy B: fair value of each leg = Kalshi mid with its overround removed. It sells the leg that is rich on SUSQ
+    and buys the cheap one, only in races where Kalshi gives the favourite ≥ the threshold. Quotes never make the pair
+    cheaper for others (asks at or above the best ask; our bid + other leg's best bid &lt; 1). At risk = shares that pay 0
+    if the underdog wins. Holding: the race still has arb pairs, B keeps its position. Closing: no pairs left, B unwinds
+    the leftover slowly with skewed two-sided quotes (asks at the best ask, small buy-back bids at the best bid).
+    Expected gain uses Kalshi's current probabilities, not a locked profit. Value at settlement counts leftover B shares at cost.
+  </p>
   <p class="note">
     Exit = both NO legs sold at a sum ≥ 1.000. Swap sale = held pairs sold below 1 to fund a bigger edge.
     Rates are orders per hour over the time each window actually covers.
@@ -139,6 +170,7 @@ function render(d) {
     ? `<div class="warn"><b>Unequal legs:</b> ${d.warnings.map(esc).join("; ")}</div>` : "";
 
   snap = d;
+  renderB(d.b);
   renderActivity();
   document.getElementById("recent").innerHTML = (d.recent || []).map(t =>
     `<tr><td>${new Date(t.ts).toLocaleTimeString()}</td><td class="k-${t.kind}">${t.kind}</td>
@@ -151,6 +183,27 @@ function render(d) {
       <td>${fmt(r.sell_sum, 3)}</td><td class="edge ${cls}">${fmt(e, 3)}</td>
       <td>${fmt(r.buy_sum, 3)}</td><td>${fmt(r.locked)}</td></tr>`;
   }).join("");
+}
+
+function renderB(b) {
+  if (!b) { document.getElementById("bintro").textContent = "Strategy B is off."; return; }
+  document.getElementById("bintro").textContent =
+    `Live since ${new Date(b.live_since).toLocaleString()} · takes ≥ ${b.take_edge} from fair, quotes ≥ ${b.quote_edge} · favourite ≥ ${b.min_favourite} on Kalshi.`;
+  const g = b.expected_gain_vs_kalshi;
+  document.getElementById("bcards").innerHTML =
+    card("At risk (all races)", fmt(b.total_at_risk, 0), `cap ${fmt(b.cap_total, 0)} total · ${fmt(b.cap_race, 0)} per race`) +
+    card("Expected gain vs Kalshi", (g >= 0 ? "+" : "") + fmt(g), "B trades valued at current Kalshi fair", g >= 0 ? "pos" : "neg") +
+    card("Races", b.races.length, b.races.map(r => `${r.mode}`).filter((v, i, a) => a.indexOf(v) === i).join(" · "));
+  document.getElementById("brows").innerHTML = b.races.map(r => `<tr><td>${esc(r.race)}</td>
+    <td><span class="mode m-${r.mode}">${r.mode}</span></td><td>${fmt(r.no_d, 0)}</td><td>${fmt(r.no_r, 0)}</td>
+    <td>${fmt(r.pairs, 0)}</td><td>${fmt(r.at_risk, 0)}</td>
+    <td>${r.favourite ? (r.favourite === "D" ? "Dem " : "Rep ") + fmt(r.p_favourite * 100, 1) + "%" : `<span class="n">${esc(r.kalshi_why || "–")}</span>`}</td>
+    <td>${r.leftover_leg ? `${fmt(r.leftover, 0)} NO ${r.leftover_leg === "D" ? "Dem" : "Rep"}` : "–"}</td>
+    <td>${fmt(r.leftover_bid, 3)}</td><td>${fmt(r.leftover_fair, 3)}</td></tr>`).join("");
+  document.getElementById("brecent").innerHTML = (b.recent || []).map(t =>
+    `<tr><td>${new Date(t.ts).toLocaleTimeString()}</td><td class="k-${t.side}">${t.side.toLowerCase()}</td>
+      <td>${esc(t.race)}</td><td>NO ${esc(t.party.slice(0, 3))}</td><td>${fmt(t.qty, 0)}</td><td>${fmt(t.price, 4)}</td></tr>`).join("")
+    || `<tr><td colspan="6" class="n">No strategy B trades yet.</td></tr>`;
 }
 
 let snap = null;

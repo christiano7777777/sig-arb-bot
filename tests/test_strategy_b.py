@@ -104,6 +104,34 @@ def test_buys_limited_by_cash():
     assert sum(o["qty"] * o["price"] for o in r["orders"] if o["side"] == "buy") <= 500 + 1e-9
 
 
+def test_closing_sells_a_clip_at_best_ask_and_no_buyback_at_full_size():
+    pin(); config.B_CLOSE_CLIP, config.B_CLOSE_BID_RATIO = 500, 0.5
+    r = strategy_b.decide(BOOKS, P, {"D": 0, "R": 5_000}, room_total=1e9, cash=10_000)
+    assert r["mode"] == "closing"
+    assert [(o["leg"], o["side"], o["price"], o["qty"]) for o in r["orders"]] == [("R", "sell", 0.845, 500)]
+
+
+def test_closing_buys_back_more_as_leftover_shrinks_and_earns_spread():
+    pin(); config.B_CLOSE_CLIP, config.B_CLOSE_BID_RATIO = 500, 0.5
+    r = strategy_b.decide(BOOKS, P, {"D": 0, "R": 1_000}, room_total=1e9, cash=10_000)
+    sell = orders(r, side="sell")[0]; buy = orders(r, side="buy")[0]
+    assert sell["price"] == 0.845 and buy["price"] == 0.84          # ask at best ask, bid at best bid
+    assert buy["qty"] == 200 and sell["qty"] == 500                 # 0.5 * 500 * (1 - 1000/5000); net selling
+
+
+def test_closing_works_without_kalshi():
+    pin()
+    config.B_CLOSE_CLIP = 500
+    r = strategy_b.decide(BOOKS, P, {"D": 0, "R": 300}, room_total=1e9, kalshi_ok=False)
+    assert orders(r, side="sell")[0]["qty"] == 300
+
+
+def test_holding_mode_while_pairs_remain():
+    pin()
+    r = strategy_b.decide(BOOKS, P, {"D": 10, "R": 5_010}, room_total=1e9, cash=0)
+    assert r["mode"] == "holding"
+
+
 def test_null_case_fair_prices_no_takes():
     # SUSQ priced at Kalshi fair: nothing is far enough from fair to take
     pin()

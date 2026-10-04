@@ -34,7 +34,7 @@ RESERVE = 50_000             # core budget = cash above this, for any edge >= MI
 # so each extra trade pays for an early exit later. To drain back to 50% before the stat-arb starts,
 # set EXTRA_CAPITAL_ENABLED = False: the bot stops buying below RESERVE and gets cash back only from
 # exits at >= 1.000 (free). HARD_RESERVE stays untouched so the unequal-fill fix always has cash.
-EXTRA_CAPITAL_ENABLED = True
+EXTRA_CAPITAL_ENABLED = False   # user, 2026-10-04: extra tier off; arb buys only with cash above RESERVE
 EXTRA_MIN_EDGE = 0.01      # user, 2026-10-04 (was 0.015): use more of the second 50k
 HARD_RESERVE = 1_000
 PER_RACE_CAP = None          # no per-race cap (user, 2026-10-04: higher edge gets priority instead)
@@ -76,6 +76,7 @@ MAX_ROTATIONS_PER_POLL = 2
 # only at/above the leg's best NO ask; our NO bid + the other leg's best NO bid < 1.
 # A race stays active while either leg has shares; it is left only when both legs are 0.
 B_ENABLED = True           # user, 2026-10-04: deploy live on the 4 races
+B_LIVE_SINCE = "2026-10-04T07:34:30+00:00"   # first live B round (dashboard counts B trades from here)
 B_INTERVAL_S = 60          # one B round per minute (quotes expire before the next round)
 B_RACES = {"Minnesota Governor": "GOVPARTYMN-26", "North Carolina Senate": "SENATENC-26",
            "New Mexico Senate": "SENATENM-26", "Delaware Senate": "SENATEDE-26"}   # SUSQ race -> Kalshi event
@@ -85,6 +86,8 @@ B_QUOTE_EDGE = 0.02        # rest quotes at least this far from fair (to be set 
 B_MAX_KALSHI_SPREAD = 0.02 # Kalshi bid-ask wider than this -> fair value not trusted, no trading
 B_KALSHI_JUMP = 0.02       # Kalshi mid moved more than this since the last read -> pull quotes
 B_RACE_CAP = 5_000         # max shares at risk per race (pay 0 if the underdog wins)
+B_CLOSE_CLIP = 500         # closing: shares offered at the best ask per round (slow unwind)
+B_CLOSE_BID_RATIO = 0.5    # closing: buy-back bid = ratio * clip * (1 - leftover / B_RACE_CAP)
 B_TOTAL_CAP_FRAC = 0.10    # max shares at risk over all races, as a fraction of portfolio value
 
 # Execution

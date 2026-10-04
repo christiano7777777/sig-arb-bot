@@ -1,7 +1,8 @@
 """Read-only portfolio snapshot for the dashboard (docs/index.html).
 
 Prints JSON: cash, every held NO+NO pair with its current edge, and the portfolio value assuming
-every pair pays 1. Three API reads (tournament, positions, bulk prices).
+every pair pays 1; plus the strategy-B (Kalshi-anchored market making) positions on config.B_RACES.
+Three API reads (tournament, positions, bulk prices) + Kalshi's public prices for the B races.
     python tools/snapshot.py > snapshot.json
 """
 import json
@@ -13,6 +14,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))   # project root
 import config  # noqa: E402
+import kalshi  # noqa: E402
 from susq_client import SusqClient  # noqa: E402
 
 TITLE = re.compile(r"^Will the (\w+) Party win the (.+?)\??$")
@@ -38,8 +40,9 @@ def build(c):
     rows, warnings = [], []
     for race, legs in races.items():
         q = {party: -p["quantity"] for party, p in legs.items()}        # NO shares (positive)
-        if len(legs) != 2 or len(set(q.values())) != 1 or min(q.values()) < 0:
-            warnings.append(f"{race}: legs {q}")
+        b_race = getattr(config, "B_ENABLED", False) and race in config.B_RACES
+        if (len(legs) != 2 or len(set(q.values())) != 1 or min(q.values()) < 0) and not b_race:
+            warnings.append(f"{race}: legs {q}")          # B races hold unequal legs on purpose
         pairs = min(max(v, 0) for v in q.values())
         cost = sum(p["costBasis"] for p in legs.values())
         yes_asks = [quotes.get(p["exchangeId"], {}).get("bestAsk") for p in legs.values()]
@@ -61,8 +64,10 @@ def build(c):
     rows.sort(key=lambda r: (r["current_edge"] is None, r["current_edge"] if r["current_edge"] is not None else 9))
 
     total_pairs = sum(r["pairs"] for r in rows)
-    activity, recent = trade_activity(c)
+    activity, recent, b_trades = trade_activity(c)
+    b = strategy_b_block(races, quotes, b_trades, cash, pos)
     return {
+        "b": b,
         "activity": activity,
         "recent": recent,
         "updated": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -115,6 +120,54 @@ def fetch_trades(c, max_pages=15):
     return list(cache.values())
 
 
+def strategy_b_block(races, quotes, b_trades, cash, pos):
+    """Per B race: legs, pairs, shares at risk (pay 0 if the underdog wins), mode, Kalshi fair value,
+    and the leftover leg valued at Kalshi fair vs at the SUSQ bid."""
+    if not getattr(config, "B_ENABLED", False):
+        return None
+    out, total_risk, ev_gain = [], 0.0, 0.0
+    cap_total = config.B_TOTAL_CAP_FRAC * (cash + sum(p["costBasis"] for legs in races.values() for p in legs.values()))
+    for race, event in config.B_RACES.items():
+        legs = races.get(race, {})
+        no = {party[0]: max(-p["quantity"], 0) for party, p in legs.items()}
+        d, r = no.get("D", 0.0), no.get("R", 0.0)
+        k = kalshi.fair(event, config.B_MAX_KALSHI_SPREAD)
+        p = k.get("p")
+        fav = max(p, key=p.get) if p else None
+        und = None if fav is None else ("R" if fav == "D" else "D")
+        risk = (no.get(und, 0.0) - no.get(fav, 0.0)) if fav else abs(d - r)
+        total_risk += max(risk, 0.0)
+        left_leg = None if abs(d - r) < 1 else ("D" if d > r else "R")
+        bid = None
+        if left_leg:
+            ex = next((x["exchangeId"] for party, x in legs.items() if party[0] == left_leg), None)
+            ya = quotes.get(ex, {}).get("bestAsk")
+            bid = None if ya is None else round(1 - ya, 4)
+        fair_left = None if not (p and left_leg) else round(1 - p[left_leg], 4)
+        extra = abs(d - r)
+        out.append({"race": race, "kalshi_event": event, "no_d": d, "no_r": r, "pairs": min(d, r),
+                    "at_risk": round(risk), "mode": "left" if d < 1 and r < 1 else ("closing" if min(d, r) < 1 else "holding"),
+                    "kalshi_ok": k["ok"], "kalshi_why": k.get("why", ""),
+                    "favourite": fav, "p_favourite": None if not p else round(p[fav], 4),
+                    "leftover_leg": left_leg, "leftover": extra, "leftover_bid": bid, "leftover_fair": fair_left,
+                    "leftover_value_fair": None if fair_left is None else round(extra * fair_left, 2),
+                    "leftover_value_bid": None if bid is None else round(extra * bid, 2)})
+    # expected gain of B's own trades vs Kalshi fair now (sells: price - fair; buys: fair - price)
+    fair_now = {}
+    for row in out:
+        if row["p_favourite"] is not None:
+            pf = row["p_favourite"]
+            fair_now[row["race"]] = {row["favourite"]: 1 - pf, ("R" if row["favourite"] == "D" else "D"): pf}
+    for t in b_trades:
+        f = fair_now.get(t["race"], {}).get(t["party"][:1])
+        if f is not None:
+            ev_gain += t["qty"] * ((t["price"] - f) if t["side"] == "SELL" else (f - t["price"]))
+    return {"races": out, "total_at_risk": round(total_risk), "cap_total": round(cap_total), "cap_race": config.B_RACE_CAP,
+            "min_favourite": config.B_MIN_FAVOURITE, "take_edge": config.B_TAKE_EDGE, "quote_edge": config.B_QUOTE_EDGE,
+            "expected_gain_vs_kalshi": round(ev_gain, 2), "live_since": config.B_LIVE_SINCE,
+            "recent": [{**t, "ts": t["ts"]} for t in b_trades[-25:][::-1]]}
+
+
 def trade_activity(c):
     """Pair the legs (same race, side of trade and size, within 5 s), then count buys, exits
     (sold at a NO-bid sum >= 1) and swap sales (sold below 1 to fund a bigger edge)."""
@@ -155,7 +208,13 @@ def trade_activity(c):
     activity["one_legged_legs_24h"] = len(legs) - 2 * len(pairs)
     recent = [{"ts": p["ts"].isoformat(timespec="seconds"), "kind": p["kind"], "race": p["race"],
                "pairs": p["qty"], "price": round(p["sum"], 4)} for p in reversed(pairs[-25:])]
-    return activity, recent
+    # strategy B trades: single legs (not part of a pair) on B races since B went live
+    since = datetime.fromisoformat(getattr(config, "B_LIVE_SINCE", "2100-01-01T00:00:00+00:00"))
+    b_trades = [{"ts": legs[i]["ts"].isoformat(timespec="seconds"), "race": legs[i]["race"], "party": legs[i]["party"],
+                 "side": legs[i]["act"], "qty": legs[i]["qty"], "price": round(legs[i]["px"], 4)}
+                for i in range(len(legs)) if i not in used and legs[i]["ts"] >= since
+                and legs[i]["race"] in getattr(config, "B_RACES", {})]
+    return activity, recent, b_trades
 
 
 if __name__ == "__main__":

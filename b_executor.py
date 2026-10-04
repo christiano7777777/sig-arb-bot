@@ -108,6 +108,8 @@ class BExecutor:
                 else:
                     edge = o["edge_vs_fair"]
                 raises = (o["leg"] == fav) == (o["side"] == "sell")
+                if res.get("mode") == "closing" and o["side"] == "sell":
+                    raises = False                                # unwinding never needs cap room
                 cands.append((edge, o["kind"] == "take", b, ex[o["leg"]], o, raises))
         # 2) hand out the total cap and the cash: takes first, each group by largest edge
         for edge, _, b, exchange, o, raises in sorted(cands, key=lambda c: (not c[1], -c[0])):

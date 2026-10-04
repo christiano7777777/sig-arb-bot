@@ -13,6 +13,12 @@ Rules agreed with the user (2026-10-04):
   - "don't make it worse": our NO ask >= the leg's current best NO ask (never undercut);
     our NO bid + the other leg's best NO bid < 1 (nobody can sell us a pair at >= 1)
   - a race is active while either leg has shares; left when both legs are 0
+  - closing (user, 2026-10-04): once the race holds no arb pairs (swapped out or exited), B unwinds
+    the leftover leg SLOWLY with skewed two-sided quotes that still earn the spread:
+      ask: at the best ask (never below it), B_CLOSE_CLIP shares per round
+      bid: at the best bid, size B_CLOSE_BID_RATIO * clip * (1 - leftover / B_RACE_CAP), i.e. none
+           while the leftover is large, more as it shrinks (size skew: we sell more than we buy back)
+    until both legs are 0
 """
 import math
 
@@ -41,6 +47,35 @@ def decide(books, p, held, room_total, kalshi_ok=True, kalshi_jump=False, cash=I
     if not out["active"]:
         out["why"] = "no shares on either leg: race left"
         return out
+    pairs = min(held["D"], held["R"])
+    if pairs < 1:
+        # closing mode (no Kalshi needed): slow, skewed two-sided quotes on the leftover leg
+        out["mode"] = "closing"
+        leg = "D" if held["D"] >= 1 else "R"
+        other = "R" if leg == "D" else "D"
+        left = held[leg]
+        if left < 1:
+            return out
+        bids, asks = books[leg]["bids"], books[leg]["asks"]
+        ref = lambda px: round(px - (1.0 - p[leg]), 4) if kalshi_ok else 0.0
+        if asks:                                   # sell at the best ask: never undercut anyone
+            out["orders"].append({"leg": leg, "side": "sell", "kind": "quote", "price": asks[0][0],
+                                  "qty": math.floor(min(left, config.B_CLOSE_CLIP) + 1e-9), "edge_vs_fair": ref(asks[0][0])})
+        shrink = max(0.0, 1.0 - left / config.B_RACE_CAP)
+        qb = math.floor(config.B_CLOSE_BID_RATIO * config.B_CLOSE_CLIP * shrink + 1e-9)
+        qb = min(qb, math.floor(config.B_RACE_CAP - left + 1e-9))      # never above the race cap
+        if bids and qb >= 1:
+            b = bids[0][0]                         # buy back at the best bid (earns the spread)
+            if asks:
+                b = min(b, round(asks[0][0] - TICK, 6))
+            if books[other]["bids"]:
+                b = min(b, round(1.0 - books[other]["bids"][0][0] - TICK, 6))   # no pair sold to us at >= 1
+            if b > 0:
+                out["orders"].append({"leg": leg, "side": "buy", "kind": "quote", "price": b, "qty": qb,
+                                      "edge_vs_fair": -ref(b) if kalshi_ok else 0.0})
+        out["why"] = "" if out["orders"] else "closing: nothing to quote"
+        return out
+    out["mode"] = "holding"
     if not kalshi_ok:
         out["why"] = "Kalshi fair value not trusted"
         return out
