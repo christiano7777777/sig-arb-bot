@@ -82,6 +82,9 @@ class Runner:
         print(f"tournament {self.tour['slug']}  run_id {self.run_id}  mode {'LIVE' if live else 'DRY RUN'}")
         print(f"{len(self.baskets)} two-party races; skipped: " + "; ".join(f"{r} ({why})" for r, why in skipped))
         self.d = None              # strategy D (set below): its ledger is hidden from A, B and C
+        # health counters, written to state/health.json each poll and published with the dashboard data
+        self.health = {"started": now_plus(0), "polls": 0, "api_errors": 0, "rejected": 0,
+                       "B": {"rounds": 0, "errors": 0, "last_error": None}, "D": {"rounds": 0, "errors": 0, "last_error": None}}
         self.state_dir = STATE_DIR
         self.b_resting = set()     # exchanges with a resting strategy-B / pair-maker quote
         self.quote_live = {}       # (exchangeId, side) -> (price, qty, expiry epoch, owner) of our resting quotes
@@ -645,6 +648,7 @@ class Basket:
                 # traded. Skip this race for a minute instead of halting (2026-10-04 live halt: 400
                 # VALIDATION_ERROR on a pair sell whose holdings were sufficient).
                 print(f"    REJECTED, nothing traded: {err}. {self.name} paused {config.REJECT_PAUSE_S} s")
+                self.r.health["rejected"] += 1
                 self.paused_until = time.time() + config.REJECT_PAUSE_S
                 return 0
             # outcome unknown even after the documented retries: stop, cancel, let the human look
@@ -760,7 +764,12 @@ def main():
         while not STOP_FILE.exists():
             try:
                 runner.poll()
+                runner.health["polls"] += 1
+                runner.health["last_poll"] = now_plus(0)
+                runner.health["feed"] = bool(runner.feed_live())
+                (STATE_DIR / "health.json").write_text(json.dumps(runner.health), encoding="utf-8")
             except ApiError as e:   # read errors only; order errors become Halt inside send_pair
+                runner.health["api_errors"] += 1
                 print(f"  API error on a read: {e}")
                 if e.status == 429:
                     time.sleep(float(getattr(e, "retry_after", None) or 60))

@@ -46,11 +46,16 @@ class BExecutor:
         if time.time() < self.next_t:
             return
         self.next_t = time.time() + config.B_INTERVAL_S
+        hb = self.r.health["B"] if hasattr(self.r, "health") else {"rounds": 0, "errors": 0}
+        hb["rounds"] += 1
         try:
             self._step(q, held)
+            hb["last_ok"] = now_plus(0)
         except ApiError as e:
             print(f"  B: API error, round skipped: {e}")
         except Exception as e:                       # noqa: BLE001 - B must never stop the arb bot
+            hb["errors"] += 1
+            hb["last_error"] = f"{now_plus(0)} {type(e).__name__}: {e}"[:300]
             print(f"  B: unexpected error, round skipped: {type(e).__name__}: {e}")
 
     @staticmethod

@@ -30,6 +30,7 @@ while true; do
             cd "$work" || exit 0
             rm -rf .git
             git init -q -b dashboard-data
+            cp "$repo_dir/state/health.json" health.json 2>/dev/null && git add health.json
             git add snapshot.json history.json
             [ -f order_tags.json ] && git add order_tags.json
             git -c user.name="github-actions[bot]" \

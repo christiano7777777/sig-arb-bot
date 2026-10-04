@@ -97,11 +97,16 @@ class DExecutor:
         if self.ctrl is None or time.time() < self.next_t:
             return
         self.next_t = time.time() + config.D_INTERVAL_S
+        hd = self.r.health["D"] if hasattr(self.r, "health") else {"rounds": 0, "errors": 0}
+        hd["rounds"] += 1
         try:
             self._step(q)
+            hd["last_ok"] = now_plus(0)
         except ApiError as e:
             print(f"  D: API error, round skipped: {e}")
         except Exception as e:                          # noqa: BLE001 - D must never stop the bot
+            hd["errors"] += 1
+            hd["last_error"] = f"{now_plus(0)} {type(e).__name__}: {e}"[:300]
             print(f"  D: unexpected error, round skipped: {type(e).__name__}: {e}")
 
     def _step(self, q):
