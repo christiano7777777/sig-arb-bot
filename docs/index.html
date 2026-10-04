@@ -73,6 +73,7 @@
   .split { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; }
   .panel { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
   .panel.pa { border-top: 3px solid var(--s1); } .panel.pb { border-top: 3px solid var(--s3); }
+  .panel.pm { border-top: 3px solid var(--s4); } .panel.pd { border-top: 3px solid var(--s2); }
   .panel .cards { margin: 8px 0 0; } .panel .card { border: 0; padding: 6px 2px; }
   .ptitle { font-weight: 650; } .ptitle .n { font-weight: 400; color: var(--muted); font-size: 12px; margin-left: 6px; }
 </style>
@@ -108,8 +109,12 @@
     <div class="split">
       <div class="panel pa"><div class="ptitle"><span class="badge ba">A</span> NO+NO arbitrage <span class="n">no directional risk</span></div>
         <div class="cards" id="sumA"></div></div>
-      <div class="panel pb"><div class="ptitle"><span class="badge bb">C</span> Kalshi market making <span class="n">two-sided, inventory-limited</span> · <span class="badge bm">B</span> pair maker</div>
+      <div class="panel pm"><div class="ptitle"><span class="badge bm">B</span> Pair maker <span class="n">resting pair quotes</span></div>
+        <div class="cards" id="sumM"></div></div>
+      <div class="panel pb"><div class="ptitle"><span class="badge bb">C</span> Kalshi market making <span class="n">two-sided, inventory-limited</span></div>
         <div class="cards" id="sumB"></div></div>
+      <div class="panel pd"><div class="ptitle"><span class="badge bd">D</span> Senate stat arb <span class="n">delta-hedged</span></div>
+        <div class="cards" id="sumD"></div></div>
     </div>
   </section>
 
@@ -224,8 +229,8 @@ function render(d) {
   const pnl = d.value_at_settlement - d.initial;
   const mtm = d.mark_to_market - d.initial;
   document.getElementById("cards").innerHTML =
-    card("Value at settlement", fmt(d.value_at_settlement), `${pnl >= 0 ? "+" : ""}${fmt(pnl)} vs ${fmt(d.initial, 0)} · B leftovers at cost`, pnl >= 0 ? "pos" : "neg") +
-    (d.b ? card("With B leftovers at Kalshi fair", fmt(d.value_at_settlement + (d.b.leftover_fair_minus_cost || 0)),
+    card("Value at settlement", fmt(d.value_at_settlement), `${pnl >= 0 ? "+" : ""}${fmt(pnl)} vs ${fmt(d.initial, 0)} · C positions at cost`, pnl >= 0 ? "pos" : "neg") +
+    (d.b ? card("With C positions at Kalshi fair", fmt(d.value_at_settlement + (d.b.leftover_fair_minus_cost || 0)),
                 (v => `${v >= 0 ? "+" : ""}${fmt(v)} vs start`)(d.value_at_settlement + (d.b.leftover_fair_minus_cost || 0) - d.initial)) : "") +
     card("Cash", fmt(d.cash), d.extra_enabled
       ? `${fmt(Math.max(d.cash - d.reserve, 0))} for any edge · ${fmt(Math.max(d.cash - d.hard_reserve, 0))} for edge ≥ ${d.extra_min_edge}`
@@ -247,11 +252,19 @@ function render(d) {
     card("Trades, last 24h", fmt(((a24.buy || {}).orders || 0) + ((a24.swap || {}).orders || 0) + ((a24.exit || {}).orders || 0), 0),
          a24.buy_edge == null ? "" : `avg buy edge ${fmt(a24.buy_edge, 4)}`);
   const b = d.b;
-  document.getElementById("sumB").innerHTML = !b ? card("Strategy B", "off", "") :
-    card("C: shares at risk", fmt((b.c_summary || {}).exposure, 0), `${fmt((b.c_summary || {}).above_limit, 0)} above the ${fmt((b.c_summary || {}).limit, 0)}/race limit, unwinding`) +
+  const mk = (b && b.maker) || {};
+  document.getElementById("sumM").innerHTML = !b ? card("Strategy B", "off", "") :
+    card("Fills, last 24h", fmt((mk["24h"] || {}).fills || 0, 0), `${fmt((mk["24h"] || {}).shares || 0, 0)} shares`) +
+    card("Fills, last 1h", fmt((mk["1h"] || {}).fills || 0, 0), `${fmt((mk["1h"] || {}).shares || 0, 0)} shares`);
+  document.getElementById("sumB").innerHTML = !b ? card("Strategy C", "off", "") :
+    card("Shares at risk", fmt((b.c_summary || {}).exposure, 0), `${fmt((b.c_summary || {}).above_limit, 0)} above the ${fmt((b.c_summary || {}).limit, 0)}/race limit, unwinding`) +
     card("Expected gain vs Kalshi", (b.expected_gain_vs_kalshi >= 0 ? "+" : "") + fmt(b.expected_gain_vs_kalshi), "estimate, not locked",
-         b.expected_gain_vs_kalshi >= 0 ? "pos" : "neg") +
-    card("Pair maker, last 24h", fmt(((b.maker || {})["24h"] || {}).fills || 0, 0) + " fills", `${fmt(((b.maker || {})["24h"] || {}).shares || 0, 0)} shares`);
+         b.expected_gain_vs_kalshi >= 0 ? "pos" : "neg");
+  const dd = d.d;
+  document.getElementById("sumD").innerHTML = !dd ? card("Strategy D", "off", "") : dd.error ? card("Strategy D", "–", esc(dd.error)) :
+    card("Gap (Rep control)", dd.gap == null ? "–" : (dd.gap >= 0 ? "+" : "") + fmt(dd.gap, 4), `Kalshi ${fmt(dd.kalshi_r, 3)} vs SUSQ ${fmt(dd.susq_r, 4)}`) +
+    card("Position", fmt(dd.control, 0), dd.direction > 0 ? "long Rep control" : dd.direction < 0 ? "short Rep control" : "flat") +
+    card("D P&L", (dd.pnl_bid >= 0 ? "+" : "") + fmt(dd.pnl_bid), "at SUSQ bids", dd.pnl_bid >= 0 ? "pos" : "neg");
   renderActivity();
   document.getElementById("recent").innerHTML = (d.recent || []).map(t =>
     `<tr><td>${new Date(t.ts).toLocaleTimeString()}</td><td class="k-${t.kind}">${t.kind}</td>
@@ -353,8 +366,8 @@ function renderActivity() {
 const HIST = SRC.replace("snapshot.json", "history.json");
 let hist = [], initial = 100000;
 const SERIES = [
-  { key: "settle", name: "Value at settlement (pairs pay 1; B leftovers at cost)", color: "var(--s1)" },
-  { key: "fair", name: "Value with B leftovers at Kalshi fair", color: "var(--s3)" },
+  { key: "settle", name: "Value at settlement (pairs pay 1; C positions at cost)", color: "var(--s1)" },
+  { key: "fair", name: "Value with C positions at Kalshi fair", color: "var(--s3)" },
   { key: "mtm", name: "Mark-to-market (current prices)", color: "var(--s2)" },
 ];
 
