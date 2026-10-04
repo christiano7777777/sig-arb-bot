@@ -79,6 +79,7 @@ MAX_ROTATIONS_PER_POLL = 2
 # only at/above the leg's best NO ask; our NO bid + the other leg's best NO bid < 1.
 # A race stays active while either leg has shares; it is left only when both legs are 0.
 B_ENABLED = True           # user, 2026-10-04: deploy live on the 4 races
+TAGS_SINCE = "2026-10-04T09:30:00+00:00"   # orders tagged by strategy from here (see Runner.tag_orders)
 B_LIVE_SINCE = "2026-10-04T07:34:30+00:00"   # first live B round (dashboard counts B trades from here)
 B_INTERVAL_S = 20          # one B round per 20 s (realtime); quotes rest MAKER_LIFE_S and are re-posted only on change
 # SUSQ race -> Kalshi market tickers {"event", "D", "R"}, built by tools/build_kalshi_map.py (party-wins
@@ -100,8 +101,8 @@ MAKER_RACES = 6            # how many held races (largest by pairs) get pair quo
 MAKER_MIN_PAIRS = 500      # ... and only races holding at least this many pairs
 MAKER_CLIP = 500           # pairs per side per race
 MAKER_LIFE_S = 300         # quotes rest this long; re-posted only on expiry or when the best price moves
-MAKER_OVER_CAP = 500       # user (c): a one-leg fill on the favourite may add at most this much risk per race,
-                           # above max(race cap, lowest exposure seen since the maker started on the race)
+MAKER_OVER_CAP = 500       # user: a one-leg fill on the favourite may take a race at most this far over its cap
+                           # (strict race cap + 500, no memory: restarts cannot ratchet it)
 MAKER_MAX_ORDERS = 8       # maker writes per round (cancels + posts), inside the 30 writes/min budget
 B_MAX_ORDERS_PER_ROUND = 10  # keeps B inside the 30 writes/min account budget it shares with the arb
 

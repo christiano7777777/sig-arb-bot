@@ -67,7 +67,16 @@ def build(c):
 
     total_pairs = sum(r["pairs"] for r in rows)
     activity, recent, b_trades = trade_activity(c)
+    tags = load_tags(sys.argv[1] if len(sys.argv) > 1 else None)
+    attrib = tagged_fills(c, t["id"], tags)
+    # strategy B trades: exact (tagged orders) since tagging began, estimated (single legs) before it
+    since_tags = getattr(config, "TAGS_SINCE", "2100-01-01T00:00:00+00:00")
+    b_trades = [x for x in b_trades if x["ts"] < since_tags[:19]] + attrib["B"]
+    b_trades.sort(key=lambda x: x["ts"])
     b = strategy_b_block(races, quotes, b_trades, cash, pos)
+    if b is not None:
+        b["maker"] = maker_block(attrib["M"])
+        b["attribution"] = {k: len(v) for k, v in attrib.items()}
     return {
         "b": b,
         "activity": activity,
@@ -122,6 +131,82 @@ def fetch_trades(c, max_pages=15):
     return list(cache.values())
 
 
+def load_tags(path):
+    """orderId -> [strategy A/B/M, kind, action, race] (tools/merge_tags.py), or {}."""
+    try:
+        return json.load(open(path, encoding="utf-8")) if path else {}
+    except (OSError, ValueError):
+        return {}
+
+
+EXMAP = Path(__file__).resolve().parents[1] / "state" / "exchange_map.json"
+FILLS = Path(__file__).resolve().parents[1] / "state" / "fills_cache.json"
+
+
+def exchange_map(c):
+    """exchangeId -> [race, party]; built once per run from the market list (2-3 reads)."""
+    try:
+        return json.loads(EXMAP.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        pass
+    from baskets import list_markets
+    out = {}
+    for m in list_markets(c, config.TOURNAMENT_SLUG):
+        g = TITLE.match(m["title"].strip())
+        if g and m.get("exchanges"):
+            out[m["exchanges"][0]["id"]] = [g.group(2), g.group(1)]
+    EXMAP.parent.mkdir(exist_ok=True)
+    EXMAP.write_text(json.dumps(out), encoding="utf-8")
+    return out
+
+
+def tagged_fills(c, tid, tags, max_pages=15):
+    """Our fills since strategy B went live, attributed by orderId to the strategy that placed the order.
+    Fills already seen are cached in state/, so after the first call this is about one read.
+    Returns {"A": [...], "B": [...], "M": [...], "untagged": [...]}; untagged fills before tagging began
+    are history (counted, not attributed). Fill price is the NO price for our NO-side fills."""
+    since = getattr(config, "B_LIVE_SINCE", "2100-01-01T00:00:00+00:00")
+    try:
+        cache = json.loads(FILLS.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        cache = {}
+    cursor = None
+    for _ in range(max_pages):
+        r = c.get("/portfolio/fills", tournamentId=tid, limit=200, cursor=cursor)
+        page = r.get("data", [])
+        new = [f for f in page if str(f["id"]) not in cache]
+        for f in new:
+            cache[str(f["id"])] = {k: f.get(k) for k in ("orderId", "exchangeId", "price", "quantity", "side", "filledAt")}
+        pg = r.get("pagination", {})
+        oldest = min((f["filledAt"] for f in page), default="")
+        if len(new) < len(page) or oldest < since[:19] or not pg.get("hasMore"):
+            break
+        cursor = pg["nextCursor"]
+    FILLS.parent.mkdir(exist_ok=True)
+    FILLS.write_text(json.dumps(cache), encoding="utf-8")
+    ex = exchange_map(c)
+    out = {"A": [], "B": [], "M": [], "untagged": []}
+    for f in sorted(cache.values(), key=lambda f: f["filledAt"]):
+        if f["filledAt"] < since[:19]:
+            continue
+        race, party = ex.get(f["exchangeId"], ["?", "?"])
+        tag = tags.get(str(f["orderId"]))
+        row = {"ts": f["filledAt"][:19] + "+00:00", "race": race, "party": party, "qty": abs(f["quantity"]),
+               "price": round(f["price"], 4) if f["price"] is not None else None,
+               "side": (tag[2] if tag else "?").upper(), "kind": tag[1] if tag else "?"}
+        out[tag[0] if tag else "untagged"].append(row)
+    return out
+
+
+def maker_block(fills):
+    """Pair-maker activity: fills per window and the most recent ones."""
+    now = datetime.now(timezone.utc)
+    age_h = lambda f: (now - datetime.fromisoformat(f["ts"])).total_seconds() / 3600
+    win = {f"{h}h": {"fills": sum(1 for f in fills if age_h(f) <= h),
+                     "shares": sum(f["qty"] for f in fills if age_h(f) <= h)} for h in WINDOWS_H}
+    return {**win, "recent": fills[-25:][::-1]}
+
+
 def strategy_b_block(races, quotes, b_trades, cash, pos):
     """Per B race: legs, pairs, shares at risk (pay 0 if the underdog wins), mode, Kalshi fair value,
     and the leftover leg valued at Kalshi fair vs at the SUSQ bid."""
@@ -173,7 +258,7 @@ def strategy_b_block(races, quotes, b_trades, cash, pos):
             fair_now[row["race"]] = {row["favourite"]: 1 - pf, ("R" if row["favourite"] == "D" else "D"): pf}
     for t in b_trades:
         f = fair_now.get(t["race"], {}).get(t["party"][:1])
-        if f is not None:
+        if f is not None and t.get("price") is not None and t["side"] in ("BUY", "SELL"):
             ev_gain += t["qty"] * ((t["price"] - f) if t["side"] == "SELL" else (f - t["price"]))
     out.sort(key=lambda x: -x["pairs"])
     return {"races": out, "total_at_risk": round(total_risk), "cap_total": round(cap_total), "cap_race": "share of pairs",

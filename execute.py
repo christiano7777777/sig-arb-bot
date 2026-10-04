@@ -192,7 +192,39 @@ class Runner:
             return None
         self.touched.update(l["exchangeId"] for l in body.get("legs", [body]))
         self._pos_t = 0.0                       # our own order: the next poll re-reads positions
-        return self.c.post(path, body)
+        r = self.c.post(path, body)
+        self.tag_orders(r, body, label)
+        return r
+
+    @staticmethod
+    def strategy_of(label):
+        """Which strategy sent an order, from its label: A = NO+NO arbitrage (pair buys, exits, swaps,
+        leg fixes), B = Kalshi-anchored trading (takes, quotes, closing), M = pair maker."""
+        tag = label.split(":")[-1]
+        if tag.startswith("b-maker"):
+            return "M", "maker"
+        if tag.startswith("b-take"):
+            return "B", "take"
+        if tag.startswith("b-quote"):
+            return "B", "quote"
+        if tag.startswith("fix"):
+            return "A", "fix"
+        return "A", tag.replace("pair-", "")      # buy / sell (exit or swap)
+
+    def tag_orders(self, r, body, label):
+        """Record orderId -> strategy for every order placed (state/order_tags.jsonl), so the dashboard
+        can attribute each fill (GET /portfolio/fills carries orderId) to the strategy that sent it."""
+        try:
+            legs = body.get("legs", [body])
+            datas = [x.get("data", x) for x in (r.get("results") or [r.get("data", r)])]
+            strat, kind = self.strategy_of(label)
+            with open(STATE_DIR / "order_tags.jsonl", "a", encoding="utf-8") as f:
+                for leg, d in zip(legs, datas):
+                    if d.get("orderId") is not None:
+                        f.write(json.dumps({"orderId": d["orderId"], "s": strat, "k": kind, "a": leg["action"],
+                                            "race": label.split(":")[0], "ex": leg["exchangeId"], "ts": now_plus(0)}) + "\n")
+        except Exception as e:                  # noqa: BLE001 - bookkeeping must never break trading
+            print(f"  (order tag not recorded: {e})")
 
     def cancel_all(self, exchange_ids):
         for ex in exchange_ids:                 # cancel-all removes our quotes there too (state also in dry runs)

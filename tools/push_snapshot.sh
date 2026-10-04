@@ -12,6 +12,7 @@ work=$(mktemp -d)
 # start from the equity curve saved by earlier runs (if any)
 if git clone -q --depth 1 -b dashboard-data "$remote" "$work/prev" 2>/dev/null; then
     cp "$work/prev/history.json" "$work/history.json" 2>/dev/null || true
+    cp "$work/prev/order_tags.json" "$work/order_tags.json" 2>/dev/null || true   # orderId -> strategy (no prices)
 fi
 # fill in the curve before the first live point by replaying the trade history since the Cup began
 if python tools/backfill_history.py > "$work/backfill.json" 2>> snapshot.err; then
@@ -19,7 +20,8 @@ if python tools/backfill_history.py > "$work/backfill.json" 2>> snapshot.err; th
 fi
 
 while true; do
-    if python tools/snapshot.py > "$work/snapshot.json.tmp" 2>> snapshot.err; then
+    python tools/merge_tags.py state/order_tags.jsonl "$work/order_tags.json" 2>> snapshot.err
+    if python tools/snapshot.py "$work/order_tags.json" > "$work/snapshot.json.tmp" 2>> snapshot.err; then
         mv "$work/snapshot.json.tmp" "$work/snapshot.json"
         python tools/append_history.py "$work/snapshot.json" "$work/history.json" 2>> snapshot.err
         (
@@ -27,6 +29,7 @@ while true; do
             rm -rf .git
             git init -q -b dashboard-data
             git add snapshot.json history.json
+            [ -f order_tags.json ] && git add order_tags.json
             git -c user.name="github-actions[bot]" \
                 -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
                 commit -q -m "portfolio snapshot $(date -u +%FT%TZ)"

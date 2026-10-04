@@ -43,7 +43,6 @@ class BExecutor:
         print(f"B: {len(self.races)} races mapped to Kalshi (traded while held)"
               + (f"; not found on SUSQ: {sorted(missing)}" if missing else ""))
         self.last_mid, self.next_t = {}, 0.0
-        self.maker_base = {}       # race -> lowest exposure seen while pair-making (the over-cap allowance's base)
 
     def step(self, q, held):
         if time.time() < self.next_t:
@@ -197,10 +196,9 @@ class BExecutor:
                 fav = max(k["p"], key=k["p"].get)
                 und = "R" if fav == "D" else "D"
                 exposure = max(h[und] - h[fav], 0.0)
-                base = min(self.maker_base.get(b.name, exposure), exposure)   # only ever moves down
-                self.maker_base[b.name] = base
-                # (c): even over B's cap, a one-leg fill may add up to MAKER_OVER_CAP above the base
-                limit = max(race_cap[b.name], base) + config.MAKER_OVER_CAP
+                # (1, user 2026-10-04): a one-leg fill on the favourite may take the race at most
+                # MAKER_OVER_CAP over its cap. No memory, so restarts cannot ratchet it up.
+                limit = race_cap[b.name] + config.MAKER_OVER_CAP
                 rroom = max(0.0, min(limit - exposure, max(room, 0.0) + config.MAKER_OVER_CAP))
             books = {x: self.top_book(q, ex[x]) for x in "DR"}
             cheapest = min((v for n, v in pair_ask.items() if n != b.name), default=None)   # another race
