@@ -16,7 +16,7 @@ Rules agreed with the user (2026-10-04):
   - closing (user, 2026-10-04): once the race holds no arb pairs (swapped out or exited), B unwinds
     the leftover leg SLOWLY with skewed two-sided quotes that still earn the spread:
       ask: at the best ask (never below it), B_CLOSE_CLIP shares per round
-      bid: at the best bid, size B_CLOSE_BID_RATIO * clip * (1 - leftover / B_RACE_CAP), i.e. none
+      bid: at the best bid, size B_CLOSE_BID_RATIO * clip * (1 - leftover / B_CLOSE_REF), i.e. none
            while the leftover is large, more as it shrinks (size skew: we sell more than we buy back)
     until both legs are 0
 """
@@ -36,11 +36,12 @@ def down(x):
     return round(math.floor(round(x / TICK, 6)) * TICK, 6)
 
 
-def decide(books, p, held, room_total, kalshi_ok=True, kalshi_jump=False, cash=INF):
+def decide(books, p, held, room_total, kalshi_ok=True, kalshi_jump=False, cash=INF, race_cap=None):
     """books: {"D"/"R": {"bids": [(px, qty)...] best first, "asks": [...]}} in NO prices.
     p: Kalshi probabilities {"D": .., "R": ..}. held: NO shares {"D": .., "R": ..}.
     room_total: shares of exposure still allowed across all races (from B_TOTAL_CAP_FRAC).
     cash: SUSQies available for buys (a buy the cash cannot pay for must not take up cap room).
+    race_cap: shares of exposure allowed in this race (default config.B_RACE_CAP; None = no race cap).
     Returns {"active", "why", "exposure", "orders": [...]}; each order is
     {"leg", "side": "sell"/"buy", "kind": "take"/"quote", "price", "qty", "edge_vs_fair"}."""
     out = {"active": held["D"] > 0 or held["R"] > 0, "orders": [], "why": ""}
@@ -61,9 +62,9 @@ def decide(books, p, held, room_total, kalshi_ok=True, kalshi_jump=False, cash=I
         if asks:                                   # sell at the best ask: never undercut anyone
             out["orders"].append({"leg": leg, "side": "sell", "kind": "quote", "price": asks[0][0],
                                   "qty": math.floor(min(left, config.B_CLOSE_CLIP) + 1e-9), "edge_vs_fair": ref(asks[0][0])})
-        shrink = max(0.0, 1.0 - left / config.B_RACE_CAP)
+        shrink = max(0.0, 1.0 - left / config.B_CLOSE_REF)
         qb = math.floor(config.B_CLOSE_BID_RATIO * config.B_CLOSE_CLIP * shrink + 1e-9)
-        qb = min(qb, math.floor(config.B_RACE_CAP - left + 1e-9))      # never above the race cap
+        qb = min(qb, math.floor(config.B_CLOSE_REF - left + 1e-9))     # buy back only below the reference size
         if bids and qb >= 1:
             b = bids[0][0]                         # buy back at the best bid (earns the spread)
             if asks:
@@ -86,7 +87,9 @@ def decide(books, p, held, room_total, kalshi_ok=True, kalshi_jump=False, cash=I
     if p[fav] < config.B_MIN_FAVOURITE - 1e-9:
         out["why"] = f"favourite only {p[fav]:.3f} on Kalshi"
         return out
-    room = max(0.0, min(config.B_RACE_CAP - max(exposure, 0.0), room_total))
+    cap = race_cap if race_cap is not None else config.B_RACE_CAP
+    cap = INF if cap is None else cap
+    room = max(0.0, min(cap - max(exposure, 0.0), room_total))
     fair = {x: 1.0 - p[x] for x in "DR"}
 
     def raises(leg, side):

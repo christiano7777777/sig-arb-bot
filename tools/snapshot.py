@@ -9,6 +9,7 @@ import json
 import re
 import sys
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -129,11 +130,16 @@ def strategy_b_block(races, quotes, b_trades, cash, pos):
     out, total_risk, ev_gain = [], 0.0, 0.0
     leftover_fair_total, leftover_cost_total = [0.0], [0.0]
     cap_total = config.B_TOTAL_CAP_FRAC * (cash + sum(p["costBasis"] for legs in races.values() for p in legs.values()))
-    for race, event in config.B_RACES.items():
-        legs = races.get(race, {})
-        no = {party[0]: max(-p["quantity"], 0) for party, p in legs.items()}
+    held = [race for race in races if race in config.B_RACES]          # B trades every mapped race it holds
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        fairs = dict(zip(held, pool.map(lambda x: kalshi.fair(config.B_RACES[x], config.B_MAX_KALSHI_SPREAD), held)))
+    leg_no = {race: {party[0]: max(-p["quantity"], 0) for party, p in races[race].items()} for race in held}
+    pairs_total = sum(min(v.get("D", 0.0), v.get("R", 0.0)) for v in leg_no.values()) or 1.0
+    for race in held:
+        legs = races[race]
+        no = leg_no[race]
         d, r = no.get("D", 0.0), no.get("R", 0.0)
-        k = kalshi.fair(event, config.B_MAX_KALSHI_SPREAD)
+        k = fairs[race]
         p = k.get("p")
         fav = max(p, key=p.get) if p else None
         und = None if fav is None else ("R" if fav == "D" else "D")
@@ -151,7 +157,8 @@ def strategy_b_block(races, quotes, b_trades, cash, pos):
             leftover_fair_total[0] += extra * fair_left
             leftover_cost_total[0] += sum(x["costBasis"] * extra / max(-x["quantity"], 1)
                                           for party, x in legs.items() if party[0] == left_leg)
-        out.append({"race": race, "kalshi_event": event, "no_d": d, "no_r": r, "pairs": min(d, r),
+        out.append({"race": race, "kalshi_event": config.B_RACES[race]["event"], "no_d": d, "no_r": r, "pairs": min(d, r),
+                    "cap": round(cap_total * min(d, r) / pairs_total),
                     "at_risk": round(risk), "mode": "left" if d < 1 and r < 1 else ("closing" if min(d, r) < 1 else "holding"),
                     "kalshi_ok": k["ok"], "kalshi_why": k.get("why", ""),
                     "favourite": fav, "p_favourite": None if not p else round(p[fav], 4),
@@ -168,7 +175,8 @@ def strategy_b_block(races, quotes, b_trades, cash, pos):
         f = fair_now.get(t["race"], {}).get(t["party"][:1])
         if f is not None:
             ev_gain += t["qty"] * ((t["price"] - f) if t["side"] == "SELL" else (f - t["price"]))
-    return {"races": out, "total_at_risk": round(total_risk), "cap_total": round(cap_total), "cap_race": config.B_RACE_CAP,
+    out.sort(key=lambda x: -x["pairs"])
+    return {"races": out, "total_at_risk": round(total_risk), "cap_total": round(cap_total), "cap_race": "share of pairs",
             "min_favourite": config.B_MIN_FAVOURITE, "take_edge": config.B_TAKE_EDGE, "quote_edge": config.B_QUOTE_EDGE,
             "expected_gain_vs_kalshi": round(ev_gain, 2), "live_since": config.B_LIVE_SINCE,
             # leftover B shares at Kalshi fair minus at cost (value at settlement counts them at cost)

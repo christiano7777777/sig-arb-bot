@@ -4,6 +4,9 @@ A "basket" is a set of legs that together guarantee a minimum payout per unit.
 Two-party race: buy NO on the Republican market and NO on the Democratic market.
 At most one party wins, so at least one NO pays 1 -> payout >= 1 per pair.
 """
+import json as _json
+from pathlib import Path as _Path
+
 
 BASE_URL = "https://sig.thesuper.market/api/v1"
 TOURNAMENT_SLUG = "midterm-elections"
@@ -78,17 +81,20 @@ MAX_ROTATIONS_PER_POLL = 2
 B_ENABLED = True           # user, 2026-10-04: deploy live on the 4 races
 B_LIVE_SINCE = "2026-10-04T07:34:30+00:00"   # first live B round (dashboard counts B trades from here)
 B_INTERVAL_S = 60          # one B round per minute (quotes expire before the next round)
-B_RACES = {"Minnesota Governor": "GOVPARTYMN-26", "North Carolina Senate": "SENATENC-26",
-           "New Mexico Senate": "SENATENM-26", "Delaware Senate": "SENATEDE-26"}   # SUSQ race -> Kalshi event
+# SUSQ race -> Kalshi market tickers {"event", "D", "R"}, built by tools/build_kalshi_map.py (party-wins
+# settlement checked). B trades every mapped race that holds shares on either leg (user, 2026-10-04).
+B_RACES = _json.loads((_Path(__file__).parent / "kalshi_map.json").read_text(encoding="utf-8"))
 B_MIN_FAVOURITE = 0.95     # trade a race only if Kalshi gives the favourite >= this
 B_TAKE_EDGE = 0.05         # take liquidity when SUSQ price is >= this far from fair (to be set from data)
 B_QUOTE_EDGE = 0.02        # rest quotes at least this far from fair (to be set from data)
 B_MAX_KALSHI_SPREAD = 0.02 # Kalshi bid-ask wider than this -> fair value not trusted, no trading
 B_KALSHI_JUMP = 0.02       # Kalshi mid moved more than this since the last read -> pull quotes
-B_RACE_CAP = 5_000         # max shares at risk per race (pay 0 if the underdog wins)
+B_RACE_CAP = None          # per-race cap = total cap x the race's share of pairs held in B races (user, 2026-10-04)
+B_CLOSE_REF = 5_000        # closing: leftover size at which the buy-back bid is zero
 B_CLOSE_CLIP = 500         # closing: shares offered at the best ask per round (slow unwind)
-B_CLOSE_BID_RATIO = 0.5    # closing: buy-back bid = ratio * clip * (1 - leftover / B_RACE_CAP)
-B_TOTAL_CAP_FRAC = 0.10    # max shares at risk over all races, as a fraction of portfolio value
+B_CLOSE_BID_RATIO = 0.5    # closing: buy-back bid = ratio * clip * (1 - leftover / B_CLOSE_REF)
+B_TOTAL_CAP_FRAC = 0.30    # max shares at risk over all races, as a fraction of portfolio value (user: 30%)
+B_MAX_ORDERS_PER_ROUND = 10  # keeps B inside the 30 writes/min account budget it shares with the arb
 
 # Execution
 ORDER_EXPIRY_S = 10          # short expiry on every order = home-made IOC (API has no IOC flag)

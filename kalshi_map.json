@@ -1,0 +1,547 @@
+{
+ "AL-02 House race": {
+  "D": "KXHOUSERACE-AL02-26-D",
+  "R": "KXHOUSERACE-AL02-26-R",
+  "event": "KXHOUSERACE-AL02-26"
+ },
+ "AZ-01 House race": {
+  "D": "HOUSEAZ1-26-D",
+  "R": "HOUSEAZ1-26-R",
+  "event": "HOUSEAZ1-26"
+ },
+ "AZ-06 House race": {
+  "D": "HOUSEAZ6-26-D",
+  "R": "HOUSEAZ6-26-R",
+  "event": "HOUSEAZ6-26"
+ },
+ "Alabama Governor": {
+  "D": "GOVPARTYAL-26-D",
+  "R": "GOVPARTYAL-26-R",
+  "event": "GOVPARTYAL-26"
+ },
+ "Alabama Senate": {
+  "D": "SENATEAL-26-D",
+  "R": "SENATEAL-26-R",
+  "event": "SENATEAL-26"
+ },
+ "Alaska Senate": {
+  "D": "SENATEAK-26-D",
+  "R": "SENATEAK-26-R",
+  "event": "SENATEAK-26"
+ },
+ "Arizona Governor": {
+  "D": "GOVPARTYAZ-26-D",
+  "R": "GOVPARTYAZ-26-R",
+  "event": "GOVPARTYAZ-26"
+ },
+ "Arkansas Governor": {
+  "D": "GOVPARTYAR-26-D",
+  "R": "GOVPARTYAR-26-R",
+  "event": "GOVPARTYAR-26"
+ },
+ "Arkansas Senate": {
+  "D": "SENATEAR-26-D",
+  "R": "SENATEAR-26-R",
+  "event": "SENATEAR-26"
+ },
+ "CA-22 House race": {
+  "D": "HOUSECA22-26-D",
+  "R": "HOUSECA22-26-R",
+  "event": "HOUSECA22-26"
+ },
+ "CA-48 House race": {
+  "D": "KXHOUSERACE-CA48-26-D",
+  "R": "KXHOUSERACE-CA48-26-R",
+  "event": "KXHOUSERACE-CA48-26"
+ },
+ "CO-03 House race": {
+  "D": "HOUSECO3-26-D",
+  "R": "HOUSECO3-26-R",
+  "event": "HOUSECO3-26"
+ },
+ "CO-04 House race": {
+  "D": "KXHOUSERACE-CO04-26-D",
+  "R": "KXHOUSERACE-CO04-26-R",
+  "event": "KXHOUSERACE-CO04-26"
+ },
+ "CO-08 House race": {
+  "D": "HOUSECO8-26-D",
+  "R": "HOUSECO8-26-R",
+  "event": "HOUSECO8-26"
+ },
+ "California Governor": {
+  "D": "GOVPARTYCA-26-D",
+  "R": "GOVPARTYCA-26-R",
+  "event": "GOVPARTYCA-26"
+ },
+ "Colorado Governor": {
+  "D": "GOVPARTYCO-26-D",
+  "R": "GOVPARTYCO-26-R",
+  "event": "GOVPARTYCO-26"
+ },
+ "Colorado Senate": {
+  "D": "SENATECO-26-D",
+  "R": "SENATECO-26-R",
+  "event": "SENATECO-26"
+ },
+ "Connecticut Governor": {
+  "D": "GOVPARTYCT-26-D",
+  "R": "GOVPARTYCT-26-R",
+  "event": "GOVPARTYCT-26"
+ },
+ "Delaware Senate": {
+  "D": "SENATEDE-26-D",
+  "R": "SENATEDE-26-R",
+  "event": "SENATEDE-26"
+ },
+ "FL-07 House race": {
+  "D": "KXHOUSERACE-FL07-26-D",
+  "R": "KXHOUSERACE-FL07-26-R",
+  "event": "KXHOUSERACE-FL07-26"
+ },
+ "FL-09 House race": {
+  "D": "KXHOUSERACE-FL09-26-D",
+  "R": "KXHOUSERACE-FL09-26-R",
+  "event": "KXHOUSERACE-FL09-26"
+ },
+ "FL-13 House race": {
+  "D": "HOUSEFL13-26-D",
+  "R": "HOUSEFL13-26-R",
+  "event": "HOUSEFL13-26"
+ },
+ "FL-16 House race": {
+  "D": "KXHOUSERACE-FL16-26-D",
+  "R": "KXHOUSERACE-FL16-26-R",
+  "event": "KXHOUSERACE-FL16-26"
+ },
+ "FL-20 House race": {
+  "D": "KXHOUSERACE-FL20-26-D",
+  "R": "KXHOUSERACE-FL20-26-R",
+  "event": "KXHOUSERACE-FL20-26"
+ },
+ "FL-22 House race": {
+  "D": "KXHOUSERACE-FL22-26-D",
+  "R": "KXHOUSERACE-FL22-26-R",
+  "event": "KXHOUSERACE-FL22-26"
+ },
+ "Florida Governor": {
+  "D": "GOVPARTYFL-26-D",
+  "R": "GOVPARTYFL-26-R",
+  "event": "GOVPARTYFL-26"
+ },
+ "Florida Senate": {
+  "D": "SENATEFLS-26-D",
+  "R": "SENATEFLS-26-R",
+  "event": "SENATEFLS-26"
+ },
+ "Georgia Governor": {
+  "D": "GOVPARTYGA-26-D",
+  "R": "GOVPARTYGA-26-R",
+  "event": "GOVPARTYGA-26"
+ },
+ "Georgia Senate": {
+  "D": "SENATEGA-26-D",
+  "R": "SENATEGA-26-R",
+  "event": "SENATEGA-26"
+ },
+ "Hawaii Governor": {
+  "D": "GOVPARTYHI-26-D",
+  "R": "GOVPARTYHI-26-R",
+  "event": "GOVPARTYHI-26"
+ },
+ "IA-01 House race": {
+  "D": "HOUSEIA1-26-D",
+  "R": "HOUSEIA1-26-R",
+  "event": "HOUSEIA1-26"
+ },
+ "IA-02 House race": {
+  "D": "KXHOUSERACE-IA02-26-D",
+  "R": "KXHOUSERACE-IA02-26-R",
+  "event": "KXHOUSERACE-IA02-26"
+ },
+ "IA-03 House race": {
+  "D": "HOUSEIA3-26-D",
+  "R": "HOUSEIA3-26-R",
+  "event": "HOUSEIA3-26"
+ },
+ "Idaho Governor": {
+  "D": "GOVPARTYID-26-D",
+  "R": "GOVPARTYID-26-R",
+  "event": "GOVPARTYID-26"
+ },
+ "Idaho Senate": {
+  "D": "SENATEID-26-D",
+  "R": "SENATEID-26-R",
+  "event": "SENATEID-26"
+ },
+ "Illinois Governor": {
+  "D": "GOVPARTYIL-26-D",
+  "R": "GOVPARTYIL-26-R",
+  "event": "GOVPARTYIL-26"
+ },
+ "Illinois Senate": {
+  "D": "SENATEIL-26-D",
+  "R": "SENATEIL-26-R",
+  "event": "SENATEIL-26"
+ },
+ "Iowa Governor": {
+  "D": "GOVPARTYIA-26-D",
+  "R": "GOVPARTYIA-26-R",
+  "event": "GOVPARTYIA-26"
+ },
+ "Iowa Senate": {
+  "D": "SENATEIA-26-D",
+  "R": "SENATEIA-26-R",
+  "event": "SENATEIA-26"
+ },
+ "KY-04 House race": {
+  "D": "KXHOUSERACE-KY04-26-D",
+  "R": "KXHOUSERACE-KY04-26-R",
+  "event": "KXHOUSERACE-KY04-26"
+ },
+ "Kansas Senate": {
+  "D": "SENATEKS-26-D",
+  "R": "SENATEKS-26-R",
+  "event": "SENATEKS-26"
+ },
+ "Kentucky Senate": {
+  "D": "SENATELA-26-D",
+  "R": "SENATELA-26-R",
+  "event": "SENATELA-26"
+ },
+ "Louisiana Senate": {
+  "D": "KXSENATELA-26NOV-D",
+  "R": "KXSENATELA-26NOV-R",
+  "event": "KXSENATELA-26NOV"
+ },
+ "ME-02 House race": {
+  "D": "HOUSEME2-26-D",
+  "R": "HOUSEME2-26-R",
+  "event": "HOUSEME2-26"
+ },
+ "MI-07 House race": {
+  "D": "HOUSEMI7-26-D",
+  "R": "HOUSEMI7-26-R",
+  "event": "HOUSEMI7-26"
+ },
+ "MI-10 House race": {
+  "D": "HOUSEMI10-26-D",
+  "R": "HOUSEMI10-26-R",
+  "event": "HOUSEMI10-26"
+ },
+ "MN-01 House race": {
+  "D": "KXHOUSERACE-MN01-26-D",
+  "R": "KXHOUSERACE-MN01-26-R",
+  "event": "KXHOUSERACE-MN01-26"
+ },
+ "MN-02 House race": {
+  "D": "HOUSEMN2-26-D",
+  "R": "HOUSEMN2-26-R",
+  "event": "HOUSEMN2-26"
+ },
+ "MN-05 House race": {
+  "D": "KXHOUSERACE-MN05-26-D",
+  "R": "KXHOUSERACE-MN05-26-R",
+  "event": "KXHOUSERACE-MN05-26"
+ },
+ "MT-01 House race": {
+  "D": "HOUSEMT1-26-D",
+  "R": "HOUSEMT1-26-R",
+  "event": "HOUSEMT1-26"
+ },
+ "Maine Governor": {
+  "D": "GOVPARTYME-26-D",
+  "R": "GOVPARTYME-26-R",
+  "event": "GOVPARTYME-26"
+ },
+ "Maine Senate": {
+  "D": "SENATEME-26-D",
+  "R": "SENATEME-26-R",
+  "event": "SENATEME-26"
+ },
+ "Maryland Governor": {
+  "D": "GOVPARTYMD-26-D",
+  "R": "GOVPARTYMD-26-R",
+  "event": "GOVPARTYMD-26"
+ },
+ "Massachusetts Governor": {
+  "D": "GOVPARTYMA-26-D",
+  "R": "GOVPARTYMA-26-R",
+  "event": "GOVPARTYMA-26"
+ },
+ "Massachusetts Senate": {
+  "D": "SENATEMA-26-D",
+  "R": "SENATEMA-26-R",
+  "event": "SENATEMA-26"
+ },
+ "Michigan Governor": {
+  "D": "GOVPARTYMI-26-D",
+  "R": "GOVPARTYMI-26-R",
+  "event": "GOVPARTYMI-26"
+ },
+ "Michigan Senate": {
+  "D": "SENATEMI-26-D",
+  "R": "SENATEMI-26-R",
+  "event": "SENATEMI-26"
+ },
+ "Minnesota Governor": {
+  "D": "GOVPARTYMN-26-D",
+  "R": "GOVPARTYMN-26-R",
+  "event": "GOVPARTYMN-26"
+ },
+ "Minnesota Senate": {
+  "D": "SENATEMN-26-D",
+  "R": "SENATEMN-26-R",
+  "event": "SENATEMN-26"
+ },
+ "Mississippi Senate": {
+  "D": "SENATEMS-26-D",
+  "R": "SENATEMS-26-R",
+  "event": "SENATEMS-26"
+ },
+ "NE-02 House race": {
+  "D": "HOUSENE2-26-D",
+  "R": "HOUSENE2-26-R",
+  "event": "HOUSENE2-26"
+ },
+ "NH-01 House race": {
+  "D": "HOUSENH1-26-D",
+  "R": "HOUSENH1-26-R",
+  "event": "HOUSENH1-26"
+ },
+ "NJ-07 House race": {
+  "D": "HOUSENJ7-26-D",
+  "R": "HOUSENJ7-26-R",
+  "event": "HOUSENJ7-26"
+ },
+ "NY-13 House race": {
+  "D": "KXHOUSERACE-NY13-26-D",
+  "R": "KXHOUSERACE-NY13-26-R",
+  "event": "KXHOUSERACE-NY13-26"
+ },
+ "NY-17 House race": {
+  "D": "HOUSENY17-26-D",
+  "R": "HOUSENY17-26-R",
+  "event": "HOUSENY17-26"
+ },
+ "Nebraska Governor": {
+  "D": "GOVPARTYNE-26-D",
+  "R": "GOVPARTYNE-26-R",
+  "event": "GOVPARTYNE-26"
+ },
+ "Nevada Governor": {
+  "D": "GOVPARTYNV-26-D",
+  "R": "GOVPARTYNV-26-R",
+  "event": "GOVPARTYNV-26"
+ },
+ "New Hampshire Senate": {
+  "D": "SENATENH-26-D",
+  "R": "SENATENH-26-R",
+  "event": "SENATENH-26"
+ },
+ "New Jersey Senate": {
+  "D": "SENATENJ-26-D",
+  "R": "SENATENJ-26-R",
+  "event": "SENATENJ-26"
+ },
+ "New Mexico Governor": {
+  "D": "GOVPARTYNM-26-D",
+  "R": "GOVPARTYNM-26-R",
+  "event": "GOVPARTYNM-26"
+ },
+ "New Mexico Senate": {
+  "D": "SENATENM-26-D",
+  "R": "SENATENM-26-R",
+  "event": "SENATENM-26"
+ },
+ "New York Governor": {
+  "D": "GOVPARTYNY-26-D",
+  "R": "GOVPARTYNY-26-R",
+  "event": "GOVPARTYNY-26"
+ },
+ "North Carolina Senate": {
+  "D": "SENATENC-26-D",
+  "R": "SENATENC-26-R",
+  "event": "SENATENC-26"
+ },
+ "Oklahoma Governor": {
+  "D": "GOVPARTYOK-26-D",
+  "R": "GOVPARTYOK-26-R",
+  "event": "GOVPARTYOK-26"
+ },
+ "Oklahoma Senate": {
+  "D": "SENATEOK-26-D",
+  "R": "SENATEOK-26-R",
+  "event": "SENATEOK-26"
+ },
+ "Oregon Governor": {
+  "D": "GOVPARTYOR-26-D",
+  "R": "GOVPARTYOR-26-R",
+  "event": "GOVPARTYOR-26"
+ },
+ "Oregon Senate": {
+  "D": "SENATEOR-26-D",
+  "R": "SENATEOR-26-R",
+  "event": "SENATEOR-26"
+ },
+ "PA-01 House race": {
+  "D": "HOUSEPA1-26-D",
+  "R": "HOUSEPA1-26-R",
+  "event": "HOUSEPA1-26"
+ },
+ "PA-07 House race": {
+  "D": "HOUSEPA7-26-D",
+  "R": "HOUSEPA7-26-R",
+  "event": "HOUSEPA7-26"
+ },
+ "PA-08 House race": {
+  "D": "HOUSEPA8-26-D",
+  "R": "HOUSEPA8-26-R",
+  "event": "HOUSEPA8-26"
+ },
+ "PA-10 House race": {
+  "D": "HOUSEPA10-26-D",
+  "R": "HOUSEPA10-26-R",
+  "event": "HOUSEPA10-26"
+ },
+ "Pennsylvania Governor": {
+  "D": "GOVPARTYPA-26-D",
+  "R": "GOVPARTYPA-26-R",
+  "event": "GOVPARTYPA-26"
+ },
+ "Rhode Island Senate": {
+  "D": "SENATERI-26-D",
+  "R": "SENATERI-26-R",
+  "event": "SENATERI-26"
+ },
+ "SC-01 House race": {
+  "D": "KXHOUSERACE-SC01-26-D",
+  "R": "KXHOUSERACE-SC01-26-R",
+  "event": "KXHOUSERACE-SC01-26"
+ },
+ "South Carolina Governor": {
+  "D": "GOVPARTYSC-26-D",
+  "R": "GOVPARTYSC-26-R",
+  "event": "GOVPARTYSC-26"
+ },
+ "South Carolina Senate": {
+  "D": "SENATESC-26-D",
+  "R": "SENATESC-26-R",
+  "event": "SENATESC-26"
+ },
+ "South Dakota Governor": {
+  "D": "GOVPARTYSD-26-D",
+  "R": "GOVPARTYSD-26-R",
+  "event": "GOVPARTYSD-26"
+ },
+ "South Dakota Senate": {
+  "D": "SENATESD-26-D",
+  "R": "SENATESD-26-R",
+  "event": "SENATESD-26"
+ },
+ "TN-05 House race": {
+  "D": "KXHOUSERACE-TN05-26-D",
+  "R": "KXHOUSERACE-TN05-26-R",
+  "event": "KXHOUSERACE-TN05-26"
+ },
+ "TX-15 House race": {
+  "D": "HOUSETX15-26-D",
+  "R": "HOUSETX15-26-R",
+  "event": "HOUSETX15-26"
+ },
+ "TX-23 House race": {
+  "D": "KXHOUSERACE-TX23-26-D",
+  "R": "KXHOUSERACE-TX23-26-R",
+  "event": "KXHOUSERACE-TX23-26"
+ },
+ "TX-28 House race": {
+  "D": "HOUSETX28-26-D",
+  "R": "HOUSETX28-26-R",
+  "event": "HOUSETX28-26"
+ },
+ "Tennessee Governor": {
+  "D": "GOVPARTYTN-26-D",
+  "R": "GOVPARTYTN-26-R",
+  "event": "GOVPARTYTN-26"
+ },
+ "Tennessee Senate": {
+  "D": "SENATETN-26-D",
+  "R": "SENATETN-26-R",
+  "event": "SENATETN-26"
+ },
+ "Texas Governor": {
+  "D": "GOVPARTYTX-26-D",
+  "R": "GOVPARTYTX-26-R",
+  "event": "GOVPARTYTX-26"
+ },
+ "Texas Senate": {
+  "D": "SENATETX-26-D",
+  "R": "SENATETX-26-R",
+  "event": "SENATETX-26"
+ },
+ "VA-01 House race": {
+  "D": "HOUSEVA1-26-D",
+  "R": "HOUSEVA1-26-R",
+  "event": "HOUSEVA1-26"
+ },
+ "VA-02 House race": {
+  "D": "HOUSEVA2-26-D",
+  "R": "HOUSEVA2-26-R",
+  "event": "HOUSEVA2-26"
+ },
+ "VA-05 House race": {
+  "D": "KXHOUSERACE-VA05-26-D",
+  "R": "KXHOUSERACE-VA05-26-R",
+  "event": "KXHOUSERACE-VA05-26"
+ },
+ "VA-07 House race": {
+  "D": "HOUSEVA7-26-D",
+  "R": "HOUSEVA7-26-R",
+  "event": "HOUSEVA7-26"
+ },
+ "Vermont Governor": {
+  "D": "GOVPARTYVT-26-D",
+  "R": "GOVPARTYVT-26-R",
+  "event": "GOVPARTYVT-26"
+ },
+ "Virginia Senate": {
+  "D": "SENATEVA-26-D",
+  "R": "SENATEVA-26-R",
+  "event": "SENATEVA-26"
+ },
+ "WA-03 House race": {
+  "D": "HOUSEWA3-26-D",
+  "R": "HOUSEWA3-26-R",
+  "event": "HOUSEWA3-26"
+ },
+ "WI-01 House race": {
+  "D": "HOUSEWI1-26-D",
+  "R": "HOUSEWI1-26-R",
+  "event": "HOUSEWI1-26"
+ },
+ "WI-03 House race": {
+  "D": "HOUSEWI3-26-D",
+  "R": "HOUSEWI3-26-R",
+  "event": "HOUSEWI3-26"
+ },
+ "West Virginia Senate": {
+  "D": "SENATEWV-26-D",
+  "R": "SENATEWV-26-R",
+  "event": "SENATEWV-26"
+ },
+ "Wisconsin Governor": {
+  "D": "GOVPARTYWI-26-D",
+  "R": "GOVPARTYWI-26-R",
+  "event": "GOVPARTYWI-26"
+ },
+ "Wyoming Governor": {
+  "D": "GOVPARTYWY-26-D",
+  "R": "GOVPARTYWY-26-R",
+  "event": "GOVPARTYWY-26"
+ },
+ "Wyoming Senate": {
+  "D": "SENATEWY-26-D",
+  "R": "SENATEWY-26-R",
+  "event": "SENATEWY-26"
+ }
+}

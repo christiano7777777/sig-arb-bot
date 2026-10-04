@@ -1,6 +1,6 @@
 """Kalshi fair values for two-party races (public market data, no login, read-only).
 
-For an event with a Democratic (-D) and a Republican (-R) market:
+For a race with a Democratic and a Republican market (tickers from kalshi_map.json):
     p_D = mid_D / (mid_D + mid_R)      (removes Kalshi's own overround)
 Fair NO prices on SUSQ are then 1 - p_D and 1 - p_R = p_D.
 """
@@ -15,19 +15,19 @@ def market(ticker):
         return json.load(r)["market"]
 
 
-def fair(event, max_spread):
+def fair(tickers, max_spread):
     """Return {"p": {"D": p_D, "R": p_R}, "mid": {...}, "spread": {...}, "ok": bool, "why": str}.
     ok is False (do not trade) if a market cannot be read, has no two-sided quote, or its
     bid-ask spread is wider than max_spread."""
     mid, spread = {}, {}
     for p in ("D", "R"):
         try:
-            m = market(f"{event}-{p}")
+            m = market(tickers[p])
             bid, ask = float(m["yes_bid_dollars"]), float(m["yes_ask_dollars"])
         except Exception as e:                     # network error or missing quote
-            return {"ok": False, "why": f"{event}-{p}: {str(e)[:80]}"}
+            return {"ok": False, "why": f"{tickers[p]}: {str(e)[:80]}"}
         if not 0 < bid < ask < 1:
-            return {"ok": False, "why": f"{event}-{p}: no two-sided quote ({bid}/{ask})"}
+            return {"ok": False, "why": f"{tickers[p]}: no two-sided quote ({bid}/{ask})"}
         mid[p], spread[p] = (bid + ask) / 2, ask - bid
     total = mid["D"] + mid["R"]
     out = {"p": {"D": mid["D"] / total, "R": mid["R"] / total}, "mid": mid, "spread": spread, "ok": True, "why": ""}

@@ -550,10 +550,11 @@ DE = {"D": ([(0.875, 9000)], [(0.88, 9000)]), "R": ([(0.155, 9000)], [(0.16, 900
 
 def _b_runner(held_d, held_r, balance, kalshi_ok=True):
     import kalshi
-    config.B_RACES = {"Delaware Senate": "SENATEDE-26"}
+    config.B_RACES = {"Delaware Senate": {"event": "SENATEDE-26", "D": "SENATEDE-26-D", "R": "SENATEDE-26-R"}}
     config.B_MIN_FAVOURITE, config.B_TAKE_EDGE, config.B_QUOTE_EDGE = 0.95, 0.05, 0.02
-    config.B_RACE_CAP, config.B_TOTAL_CAP_FRAC, config.B_KALSHI_JUMP = 5_000, 0.10, 0.02
-    kalshi.fair = lambda event, max_spread: (
+    config.B_RACE_CAP, config.B_TOTAL_CAP_FRAC, config.B_KALSHI_JUMP = None, 0.10, 0.02
+    config.B_MAX_ORDERS_PER_ROUND, config.B_CLOSE_REF = 10, 5_000
+    kalshi.fair = lambda tickers, max_spread: (
         {"ok": True, "why": "", "p": {"D": 0.986, "R": 0.014}, "mid": {"D": 0.986, "R": 0.014}, "spread": {}}
         if kalshi_ok else {"ok": False, "why": "test"})
     fake = FakeClient({"Delaware Senate": DE}, balance=balance)
@@ -575,7 +576,8 @@ def test_b_round_sells_rich_leg_within_cap_and_cash():
     sells_d = [o for o in orders if o["exchangeId"] == ex_d and o["action"] == "sell"]
     assert sells_d and all(o["price"] >= 0.014 + 0.05 - 1e-9 for o in sells_d)       # >= fair + take edge
     raising = sum(o["quantity"] for o in orders if (o["exchangeId"], o["action"]) in ((ex_d, "sell"), (ex_r, "buy")))
-    assert raising <= 5_000                                                           # race cap
+    total_cap = 0.10 * (1_500 + 0.12 * 37_588 + 0.84 * 37_588)
+    assert raising <= total_cap + 1                                                   # one race: all of the cap
     assert sum(o["quantity"] * o["price"] for o in orders if o["action"] == "buy") <= 500 + 1e-9   # cash
 
 
@@ -612,12 +614,12 @@ def test_b_total_cap_goes_to_the_biggest_edge_first():
     import kalshi
     # Aaa race: rich leg 0.12 vs fair 0.014 (edge ~0.1); Zzz race: rich leg 0.085 vs fair 0.048 (~0.04)
     small = {"D": ([(0.91, 9000)], [(0.915, 9000)]), "R": ([(0.12, 9000)], [(0.125, 9000)])}
-    config.B_RACES = {"Zzz race": "Z", "Aaa race": "A"}
+    config.B_RACES = {"Zzz race": {"event": "Z", "D": "Z-D", "R": "Z-R"}, "Aaa race": {"event": "A", "D": "A-D", "R": "A-R"}}
     config.B_MIN_FAVOURITE, config.B_TAKE_EDGE, config.B_QUOTE_EDGE = 0.95, 0.05, 0.02
-    config.B_RACE_CAP, config.B_KALSHI_JUMP = 5_000, 0.02
+    config.B_RACE_CAP, config.B_KALSHI_JUMP, config.B_MAX_ORDERS_PER_ROUND = None, 0.02, 10
     probs = {"A": 0.986, "Z": 0.952}
-    kalshi.fair = lambda e, m: {"ok": True, "why": "", "p": {"D": probs[e], "R": 1 - probs[e]},
-                                "mid": {"D": probs[e], "R": 1 - probs[e]}, "spread": {}}
+    kalshi.fair = lambda t, m: {"ok": True, "why": "", "p": {"D": probs[t["event"]], "R": 1 - probs[t["event"]]},
+                                "mid": {"D": probs[t["event"]], "R": 1 - probs[t["event"]]}, "spread": {}}
     fake = FakeClient({"Zzz race": small, "Aaa race": DE}, balance=1_000)
     fake.held = {fake.ex_of(n, x): (-20_000, 2_000.0) for n in ("Aaa race", "Zzz race") for x in "DR"}
     r = make_runner(fake, exposure=500, b_enabled=True)
@@ -627,6 +629,36 @@ def test_b_total_cap_goes_to_the_biggest_edge_first():
     first = _b_orders(r)[0]
     assert first["exchangeId"] in aaa                         # biggest edge served first
     assert sum(o["quantity"] for o in _b_orders(r) if o["action"] == "sell") <= 3_000
+
+
+def _two_race_b(held_big, held_small, frac=0.10, max_orders=10):
+    import kalshi
+    config.B_RACES = {"Big race": {"event": "B", "D": "B-D", "R": "B-R"}, "Small race": {"event": "S", "D": "S-D", "R": "S-R"}}
+    config.B_MIN_FAVOURITE, config.B_TAKE_EDGE, config.B_QUOTE_EDGE = 0.95, 0.05, 0.02
+    config.B_RACE_CAP, config.B_KALSHI_JUMP, config.B_MAX_ORDERS_PER_ROUND = None, 0.02, max_orders
+    kalshi.fair = lambda t, m: {"ok": True, "why": "", "p": {"D": 0.986, "R": 0.014}, "mid": {"D": 0.986, "R": 0.014}, "spread": {}}
+    fake = FakeClient({"Big race": DE, "Small race": DE}, balance=1_000)
+    fake.held = {fake.ex_of("Big race", x): (-held_big, 0.5 * held_big) for x in "DR"}
+    fake.held.update({fake.ex_of("Small race", x): (-held_small, 0.5 * held_small) for x in "DR"})
+    r = make_runner(fake, exposure=500, b_enabled=True)
+    config.B_TOTAL_CAP_FRAC = frac
+    return fake, r
+
+
+def test_b_bigger_holding_gets_bigger_race_cap():
+    fake, r = _two_race_b(30_000, 10_000)                     # pairs 3:1
+    r.b.step(r.quotes(), r.positions())
+    total = 0.10 * (1_000 + 40_000)                           # cash + cost basis
+    sold = {n: sum(o["quantity"] for o in _b_orders(r) if o["action"] == "sell"
+                   and o["exchangeId"] == fake.ex_of(n, "D")) for n in ("Big race", "Small race")}
+    assert sold["Big race"] <= total * 0.75 + 1 and sold["Small race"] <= total * 0.25 + 1
+    assert sold["Big race"] > sold["Small race"]
+
+
+def test_b_orders_per_round_are_limited():
+    fake, r = _two_race_b(30_000, 10_000, max_orders=1)
+    r.b.step(r.quotes(), r.positions())
+    assert len(_b_orders(r)) == 1
 
 
 def test_arb_trade_allowed_on_b_race_with_unequal_legs():

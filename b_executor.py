@@ -1,6 +1,10 @@
 """Strategy B executor: Kalshi-anchored orders on config.B_RACES, run inside the arb bot's process
 (one rate limiter, one positions read per poll). Rules: strategy_b.py. Live since 2026-10-04 (user).
 
+Races: every race in config.B_RACES (kalshi_map.json) that holds shares on either leg (user, 2026-10-04).
+Caps: total = B_TOTAL_CAP_FRAC of portfolio value; each race gets the total x its share of the pairs
+held in those races (bigger holdings, bigger position). At most B_MAX_ORDERS_PER_ROUND orders per round.
+
 Every B_INTERVAL_S seconds, per race:
   1. fair value from Kalshi (public API); no trading on that race if it is not trusted
   2. top of book from the poll's bulk quotes; full book read only for a leg that shows a take
@@ -12,6 +16,7 @@ Buys are limited by cash above HARD_RESERVE. B errors skip the round; they never
 """
 import math
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 import config
 import kalshi
@@ -33,7 +38,8 @@ class BExecutor:
         self.r = runner
         self.races = [b for b in runner.baskets if b.b_race]
         missing = set(config.B_RACES) - {b.name for b in self.races}
-        print(f"B: trading {[b.name for b in self.races]}" + (f"; not found on SUSQ: {sorted(missing)}" if missing else ""))
+        print(f"B: {len(self.races)} races mapped to Kalshi (traded while held)"
+              + (f"; not found on SUSQ: {sorted(missing)}" if missing else ""))
         self.last_mid, self.next_t = {}, 0.0
 
     def step(self, q, held):
@@ -62,10 +68,17 @@ class BExecutor:
         cap_total = config.B_TOTAL_CAP_FRAC * (cash + sum(p["cost"] for p in held.values()))
         state = []
         used = 0.0
+        active = []                                               # races with shares on either leg
         for b in self.races:
             ex = {b.legs[i]["party"]: b.ex[i] for i in (0, 1)}
             h = {x: held.get(ex[x], {}).get("no", 0.0) for x in "DR"}
-            k = kalshi.fair(config.B_RACES[b.name], config.B_MAX_KALSHI_SPREAD)
+            if h["D"] >= 1 or h["R"] >= 1:
+                active.append((b, ex, h))
+        with ThreadPoolExecutor(max_workers=8) as pool:           # Kalshi in parallel: the arb loop waits
+            fairs = list(pool.map(lambda a: kalshi.fair(config.B_RACES[a[0].name], config.B_MAX_KALSHI_SPREAD), active))
+        pairs_total = sum(min(h["D"], h["R"]) for _, _, h in active) or 1.0
+        race_cap = {b.name: cap_total * min(h["D"], h["R"]) / pairs_total for b, _, h in active}
+        for (b, ex, h), k in zip(active, fairs):
             jump = False
             if k["ok"]:
                 prev = self.last_mid.get(b.name)
@@ -84,7 +97,8 @@ class BExecutor:
                 self.r.b_resting -= set(ex.values())
             books = {x: self.top_book(q, ex[x]) for x in "DR"}
             p = k.get("p", {"D": 0.5, "R": 0.5})
-            res = strategy_b.decide(books, p, h, INF, kalshi_ok=k["ok"], kalshi_jump=jump, cash=spend)
+            res = strategy_b.decide(books, p, h, INF, kalshi_ok=k["ok"], kalshi_jump=jump, cash=spend,
+                                    race_cap=race_cap[b.name])
             if not res["orders"]:
                 if k["ok"] is False:
                     print(f"  B {b.name}: {res['why']} ({k.get('why', '')})")
@@ -93,7 +107,8 @@ class BExecutor:
             if take_legs:                                         # size takes from the real book
                 for x in take_legs:
                     books[x] = self.full_book(ex[x])
-                res = strategy_b.decide(books, p, h, INF, kalshi_ok=k["ok"], kalshi_jump=jump, cash=spend)
+                res = strategy_b.decide(books, p, h, INF, kalshi_ok=k["ok"], kalshi_jump=jump, cash=spend,
+                                    race_cap=race_cap[b.name])
             fav = max(p, key=p.get)
             fair = {x: 1.0 - p[x] for x in "DR"}
             for o in res["orders"]:
@@ -112,7 +127,10 @@ class BExecutor:
                     raises = False                                # unwinding never needs cap room
                 cands.append((edge, o["kind"] == "take", b, ex[o["leg"]], o, raises))
         # 2) hand out the total cap and the cash: takes first, each group by largest edge
+        sent = 0
         for edge, _, b, exchange, o, raises in sorted(cands, key=lambda c: (not c[1], -c[0])):
+            if sent >= config.B_MAX_ORDERS_PER_ROUND:
+                break
             qty = o["qty"]
             if raises:
                 qty = min(qty, math.floor(room + 1e-9))
@@ -125,6 +143,7 @@ class BExecutor:
             if o["side"] == "buy":
                 spend -= qty * o["price"]
             self.send(b, exchange, o, qty)
+            sent += 1
 
     def send(self, b, exchange, o, qty):
         expiry = config.ORDER_EXPIRY_S if o["kind"] == "take" else max(5, config.B_INTERVAL_S - 5)
