@@ -170,7 +170,7 @@ function render(d) {
     ? `<div class="warn"><b>Unequal legs:</b> ${d.warnings.map(esc).join("; ")}</div>` : "";
 
   snap = d;
-  renderB(d.b);
+  renderB(d.b);       // uses snap
   renderActivity();
   document.getElementById("recent").innerHTML = (d.recent || []).map(t =>
     `<tr><td>${new Date(t.ts).toLocaleTimeString()}</td><td class="k-${t.kind}">${t.kind}</td>
@@ -193,6 +193,8 @@ function renderB(b) {
   document.getElementById("bcards").innerHTML =
     card("At risk (all races)", fmt(b.total_at_risk, 0), `cap ${fmt(b.cap_total, 0)} total · ${fmt(b.cap_race, 0)} per race`) +
     card("Expected gain vs Kalshi", (g >= 0 ? "+" : "") + fmt(g), "B trades valued at current Kalshi fair", g >= 0 ? "pos" : "neg") +
+    card("Value with B at Kalshi fair", fmt(snap.value_at_settlement + (b.leftover_fair_minus_cost || 0)),
+         `${(b.leftover_fair_minus_cost >= 0 ? "+" : "") + fmt(b.leftover_fair_minus_cost)} vs leftovers at cost`) +
     card("Races", b.races.length, b.races.map(r => `${r.mode}`).filter((v, i, a) => a.indexOf(v) === i).join(" · "));
   document.getElementById("brows").innerHTML = b.races.map(r => `<tr><td>${esc(r.race)}</td>
     <td><span class="mode m-${r.mode}">${r.mode}</span></td><td>${fmt(r.no_d, 0)}</td><td>${fmt(r.no_r, 0)}</td>

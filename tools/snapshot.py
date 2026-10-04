@@ -44,7 +44,8 @@ def build(c):
         if (len(legs) != 2 or len(set(q.values())) != 1 or min(q.values()) < 0) and not b_race:
             warnings.append(f"{race}: legs {q}")          # B races hold unequal legs on purpose
         pairs = min(max(v, 0) for v in q.values())
-        cost = sum(p["costBasis"] for p in legs.values())
+        # cost of the PAIRS only: each leg's average cost x pairs (B races hold extra shares on one leg)
+        cost = sum(p["costBasis"] * pairs / max(-p["quantity"], 1) for p in legs.values() if -p["quantity"] > 0)
         yes_asks = [quotes.get(p["exchangeId"], {}).get("bestAsk") for p in legs.values()]
         yes_bids = [quotes.get(p["exchangeId"], {}).get("bestBid") for p in legs.values()]
         sell = None if None in yes_asks else round(sum(1 - a for a in yes_asks), 4)  # NO bids sum
@@ -126,6 +127,7 @@ def strategy_b_block(races, quotes, b_trades, cash, pos):
     if not getattr(config, "B_ENABLED", False):
         return None
     out, total_risk, ev_gain = [], 0.0, 0.0
+    leftover_fair_total, leftover_cost_total = [0.0], [0.0]
     cap_total = config.B_TOTAL_CAP_FRAC * (cash + sum(p["costBasis"] for legs in races.values() for p in legs.values()))
     for race, event in config.B_RACES.items():
         legs = races.get(race, {})
@@ -145,6 +147,10 @@ def strategy_b_block(races, quotes, b_trades, cash, pos):
             bid = None if ya is None else round(1 - ya, 4)
         fair_left = None if not (p and left_leg) else round(1 - p[left_leg], 4)
         extra = abs(d - r)
+        if fair_left is not None:
+            leftover_fair_total[0] += extra * fair_left
+            leftover_cost_total[0] += sum(x["costBasis"] * extra / max(-x["quantity"], 1)
+                                          for party, x in legs.items() if party[0] == left_leg)
         out.append({"race": race, "kalshi_event": event, "no_d": d, "no_r": r, "pairs": min(d, r),
                     "at_risk": round(risk), "mode": "left" if d < 1 and r < 1 else ("closing" if min(d, r) < 1 else "holding"),
                     "kalshi_ok": k["ok"], "kalshi_why": k.get("why", ""),
@@ -165,6 +171,8 @@ def strategy_b_block(races, quotes, b_trades, cash, pos):
     return {"races": out, "total_at_risk": round(total_risk), "cap_total": round(cap_total), "cap_race": config.B_RACE_CAP,
             "min_favourite": config.B_MIN_FAVOURITE, "take_edge": config.B_TAKE_EDGE, "quote_edge": config.B_QUOTE_EDGE,
             "expected_gain_vs_kalshi": round(ev_gain, 2), "live_since": config.B_LIVE_SINCE,
+            # leftover B shares at Kalshi fair minus at cost (value at settlement counts them at cost)
+            "leftover_fair_minus_cost": round(leftover_fair_total[0] - leftover_cost_total[0], 2),
             "recent": [{**t, "ts": t["ts"]} for t in b_trades[-25:][::-1]]}
 
 
