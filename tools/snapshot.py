@@ -59,9 +59,9 @@ def build(c):
     rows, warnings = [], []
     for race, legs in races.items():
         q = {party: -p["quantity"] for party, p in legs.items()}        # NO shares (positive)
-        b_race = getattr(config, "B_ENABLED", False) and race in config.B_RACES
+        b_race = (getattr(config, "B_ENABLED", False) and race in config.B_RACES) or race == config.D_CONTROL_RACE
         if (len(legs) != 2 or len(set(q.values())) != 1 or min(q.values()) < 0) and not b_race:
-            warnings.append(f"{race}: legs {q}")          # B races hold unequal legs on purpose
+            warnings.append(f"{race}: legs {q}")          # B races and D's control market hold unequal legs on purpose
         # a pair needs BOTH legs: a race holding one leg only (e.g. C's leftover after A swapped its pairs
         # out) has 0 pairs; before this fix such a leg was counted as pairs worth 1 (+~2.6k on 2026-10-04)
         pairs = min(max(v, 0) for v in q.values()) if len(q) == 2 else 0
