@@ -16,6 +16,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))   # project root
 import config  # noqa: E402
 import kalshi  # noqa: E402
+import pair_maker  # noqa: E402
 import strategy_c  # noqa: E402
 from susq_client import SusqClient  # noqa: E402
 
@@ -49,7 +50,7 @@ def build(c):
     legs_of = {}
     for ex, (race, party) in exmap.items():
         legs_of.setdefault(race, {})[party[0]] = ex
-    ids = sorted(set(ids) | {e for race in races if race in config.B_RACES for e in legs_of.get(race, {}).values()})
+    ids = sorted(set(ids) | {e for race in races for e in legs_of.get(race, {}).values()})   # both legs of every held race
     quotes = {}
     for i in range(0, len(ids), 100):
         r = c.get("/exchanges/prices", ids=",".join(ids[i:i + 100]), tournamentId=t["id"])
@@ -66,8 +67,11 @@ def build(c):
         pairs = min(max(v, 0) for v in q.values()) if len(q) == 2 else 0
         # cost of the PAIRS only: each leg's average cost x pairs (B races hold extra shares on one leg)
         cost = sum(p["costBasis"] * pairs / max(-p["quantity"], 1) for p in legs.values() if -p["quantity"] > 0)
-        yes_asks = [quotes.get(p["exchangeId"], {}).get("bestAsk") for p in legs.values()]
-        yes_bids = [quotes.get(p["exchangeId"], {}).get("bestBid") for p in legs.values()]
+        # pair prices from BOTH legs of the race (a race holding one leg only would otherwise show that
+        # leg's price as the 'pair' price: Hawaii Governor read 0.04 instead of 0.955 on 2026-10-04)
+        both = list(legs_of.get(race, {}).values()) if len(legs_of.get(race, {})) == 2 else [p["exchangeId"] for p in legs.values()]
+        yes_asks = [quotes.get(e, {}).get("bestAsk") for e in both] if len(both) == 2 else [None]
+        yes_bids = [quotes.get(e, {}).get("bestBid") for e in both] if len(both) == 2 else [None]
         sell = None if None in yes_asks else round(sum(1 - a for a in yes_asks), 4)  # NO bids sum
         buy = None if None in yes_bids else round(sum(1 - b for b in yes_bids), 4)   # NO asks sum
         rows.append({
@@ -93,6 +97,7 @@ def build(c):
     b = strategy_b_block(races, quotes, b_trades, cash, pos)
     if b is not None:
         add_c_view(b, quotes, legs_of, cash)
+        b["maker_view"] = maker_view(c, t["id"], races, legs_of, quotes, b, cash)
     if b is not None:
         b["maker"] = maker_block(attrib["B"])                                          # B: pair maker
         b["attribution"] = {k: len(v) for k, v in attrib.items()}
@@ -443,6 +448,52 @@ def strategy_d_block(c, quotes, legs_of, ledger, fills):
             "pnl_bid": round(flow + bid_val, 2), "pnl_fair": round(flow + fair_val, 2),
             "holdings_cost": round(cost_val, 2), "holdings_fair": round(fair_val, 2),
             "recent": [{k: f[k] for k in ("ts", "race", "party", "side", "qty", "price", "kind")} for f in fills[-25:][::-1]]}
+
+
+def maker_view(c, tid, races, legs_of, quotes, b, cash):
+    """Strategy B (pair maker) per race it quotes: the largest mapped held races (as the bot picks them),
+    their books, pair ask / bid sums, the cheapest pair in another race, and the quotes B wants now."""
+    allx = sorted({e for legs in legs_of.values() for e in legs.values()} - set(quotes))
+    for i in range(0, len(allx), 100):
+        r = c.get("/exchanges/prices", ids=",".join(allx[i:i + 100]), tournamentId=tid)
+        quotes.update({x["exchangeId"]: x for x in r["data"]})
+    noq = lambda e: {"bid": round(1 - quotes[e]["bestAsk"], 4) if quotes.get(e, {}).get("bestAsk") is not None else None,
+                     "ask": round(1 - quotes[e]["bestBid"], 4) if quotes.get(e, {}).get("bestBid") is not None else None}
+    pair_ask = {}
+    for race, legs in legs_of.items():
+        if set(legs) == {"D", "R"}:
+            a = [noq(legs[x])["ask"] for x in "DR"]
+            if None not in a:
+                pair_ask[race] = round(sum(a), 4)
+    held = []
+    for race, legs in races.items():
+        if race in config.B_RACES and set(legs_of.get(race, {})) == {"D", "R"}:
+            no = {party[0]: max(-p["quantity"], 0) for party, p in legs.items()}
+            pairs = min(no.get("D", 0), no.get("R", 0))
+            if pairs >= config.MAKER_MIN_PAIRS:
+                held.append((pairs, race, no))
+    held.sort(reverse=True)
+    c_rows = {r["race"]: r for r in (b or {}).get("races", [])}
+    spend = max(0.0, (cash - config.HARD_RESERVE) * (getattr(config, "CASH_SPLIT", {}) or {}).get("B", 1.0))
+    out = []
+    for pairs, race, no in held[:config.MAKER_RACES]:
+        legs = legs_of[race]
+        books = {x: noq(legs[x]) for x in "DR"}
+        cheapest = min((v for n, v in pair_ask.items() if n != race), default=None)
+        cr = c_rows.get(race, {})
+        fav, room = "either", max(0.0, config.MAKER_OVER_CAP - abs(no.get("D", 0) - no.get("R", 0)))
+        if cr.get("p_favourite") is not None and cr["p_favourite"] >= config.B_MIN_FAVOURITE:
+            fav = cr["favourite"]; und = "R" if fav == "D" else "D"
+            exposure = max(no.get(und, 0) - no.get(fav, 0), 0)
+            room = max(0.0, config.C_LIMIT + config.MAKER_OVER_CAP - exposure)
+        bk = {x: {"bids": [(books[x]["bid"], 1)] if books[x]["bid"] is not None else [],
+                  "asks": [(books[x]["ask"], 1)] if books[x]["ask"] is not None else []} for x in "DR"}
+        want = pair_maker.pair_quotes(bk, {"D": no.get("D", 0), "R": no.get("R", 0)}, cheapest, spend, fav, room)
+        ask_sum = None if None in (books["D"]["ask"], books["R"]["ask"]) else round(books["D"]["ask"] + books["R"]["ask"], 4)
+        bid_sum = None if None in (books["D"]["bid"], books["R"]["bid"]) else round(books["D"]["bid"] + books["R"]["bid"], 4)
+        out.append({"race": race, "pairs": pairs, "book": books, "ask_sum": ask_sum, "bid_sum": bid_sum,
+                    "cheapest_other": cheapest, "quotes": want})
+    return {"races": out, "clip": config.MAKER_CLIP, "min_pairs": config.MAKER_MIN_PAIRS, "n_races": config.MAKER_RACES}
 
 
 def add_c_view(b, quotes, legs_of, cash):

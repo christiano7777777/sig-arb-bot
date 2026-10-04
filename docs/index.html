@@ -105,19 +105,6 @@
         <div class="tip" id="tip" hidden></div>
       </div>
     </div>
-    <h2>P&amp;L by strategy</h2>
-    <p class="note" id="ssince" style="margin:-4px 0 8px"></p>
-    <div class="chartcard" style="margin-bottom:18px">
-      <div class="winbar" id="swinbar" role="group" aria-label="Time window for P&L by strategy">
-        <button data-w="1">1h</button><button data-w="6">6h</button><button data-w="24">24h</button>
-        <button data-w="168">7d</button><button data-w="0">All (since start of Cup)</button>
-      </div>
-      <div class="legend" id="slegend"></div>
-      <div class="chartwrap">
-        <svg id="schart" style="width:100%;height:240px;display:block;touch-action:pan-y" role="img" aria-label="P&L by strategy over time"></svg>
-        <div class="tip" id="stip" hidden></div>
-      </div>
-    </div>
     <h2>By strategy</h2>
     <div class="split">
       <div class="panel pa"><div class="ptitle"><span class="badge ba">A</span> NO+NO arbitrage <span class="n">no directional risk</span></div>
@@ -132,6 +119,16 @@
   </section>
 
   <section data-panel="a" hidden>
+    <h2>A arbitrage equity <span class="n">(P&amp;L since the Cup began)</span></h2>
+    <div class="chartcard" style="margin-bottom:18px">
+      <div class="winbar" id="wA" role="group" aria-label="Time window">
+        <button data-w="1">1h</button><button data-w="6">6h</button><button data-w="24">24h</button>
+        <button data-w="168">7d</button><button data-w="0">All (since start of Cup)</button>
+      </div>
+      <div class="legend" id="lA"></div>
+      <div class="chartwrap"><svg id="cA" style="width:100%;height:220px;display:block;touch-action:pan-y" role="img" aria-label="A arbitrage P&amp;L over time"></svg><div class="tip" id="tA" hidden></div></div>
+      <p class="note" id="nA" style="margin:4px 0 0"></p>
+    </div>
     <p class="strat"><span class="badge ba">A</span> Buys one NO share of each party (pays ≥ 1 whoever wins) below 1; exits at ≥ 1;
       swaps held pairs into bigger edges (buy first when cash covers it). No directional risk.</p>
     <h2>Activity</h2>
@@ -165,7 +162,26 @@
     <p class="strat"><span class="badge bm">B</span> Rests pair quotes on the largest held races: asks on both legs at the best
       asks (sells pairs at the ask sum, only when a swap could redeploy at a gain), bids on both legs at the best bids
       while the bid sum stays below 1. No Kalshi view; a one-leg fill may move a race at most 500 shares.</p>
+    <h2>B pair maker equity <span class="n">(P&amp;L since the Cup began)</span></h2>
+    <div class="chartcard" style="margin-bottom:18px">
+      <div class="winbar" id="wB" role="group" aria-label="Time window">
+        <button data-w="1">1h</button><button data-w="6">6h</button><button data-w="24">24h</button>
+        <button data-w="168">7d</button><button data-w="0">All (since start of Cup)</button>
+      </div>
+      <div class="legend" id="lB"></div>
+      <div class="chartwrap"><svg id="cB" style="width:100%;height:220px;display:block;touch-action:pan-y" role="img" aria-label="B pair maker P&amp;L over time"></svg><div class="tip" id="tB" hidden></div></div>
+      <p class="note" id="nB" style="margin:4px 0 0"></p>
+    </div>
+
     <h2><span class="badge bm">B</span> Pair maker <span class="n">(resting pair quotes on the largest held races)</span></h2>
+    <h2>Markets B quotes <span class="n">(the largest held races; NO prices)</span></h2>
+    <div class="tablewrap" style="margin-bottom:18px">
+      <table>
+        <thead><tr><th>Race</th><th>Pairs held</th><th>NO Dem bid / ask</th><th>NO Rep bid / ask</th><th>Pair ask sum</th>
+          <th>Pair bid sum</th><th>Cheapest pair elsewhere</th><th style="text-align:left">B quotes now</th></tr></thead>
+        <tbody id="mrows"></tbody>
+      </table>
+    </div>
     <div class="cards" id="mcards"></div>
     <div class="tablewrap">
       <table>
@@ -176,6 +192,16 @@
   </section>
 
   <section data-panel="b" hidden>
+    <h2>C Kalshi market making equity <span class="n">(P&amp;L since the Cup began)</span></h2>
+    <div class="chartcard" style="margin-bottom:18px">
+      <div class="winbar" id="wC" role="group" aria-label="Time window">
+        <button data-w="1">1h</button><button data-w="6">6h</button><button data-w="24">24h</button>
+        <button data-w="168">7d</button><button data-w="0">All (since start of Cup)</button>
+      </div>
+      <div class="legend" id="lC"></div>
+      <div class="chartwrap"><svg id="cC" style="width:100%;height:220px;display:block;touch-action:pan-y" role="img" aria-label="C Kalshi market making P&amp;L over time"></svg><div class="tip" id="tC" hidden></div></div>
+      <p class="note" id="nC" style="margin:4px 0 0"></p>
+    </div>
     <p class="strat" id="bintro"></p>
     <div class="cards" id="bcards"></div>
     <h2>Races</h2>
@@ -206,6 +232,17 @@
       the state Senate races: hedge per state = control position x delta, delta = how often that race decides control under a
       national-swing model calibrated to Kalshi (correlation rho). Enter at a gap of <span id="dentry"></span>, exit everything at
       <span id="dexit"></span>; hedges rebalanced when off target by more than the band.</p>
+    <h2>D Senate stat arb equity <span class="n">(P&amp;L since the Cup began)</span></h2>
+    <div class="chartcard" style="margin-bottom:18px">
+      <div class="winbar" id="wD" role="group" aria-label="Time window">
+        <button data-w="1">1h</button><button data-w="6">6h</button><button data-w="24">24h</button>
+        <button data-w="168">7d</button><button data-w="0">All (since start of Cup)</button>
+      </div>
+      <div class="legend" id="lD"></div>
+      <div class="chartwrap"><svg id="cD" style="width:100%;height:220px;display:block;touch-action:pan-y" role="img" aria-label="D Senate stat arb P&amp;L over time"></svg><div class="tip" id="tD" hidden></div></div>
+      <p class="note" id="nD" style="margin:4px 0 0"></p>
+    </div>
+
     <div class="cards" id="dcards"></div>
     <h2>Hedge book <span class="n">(sorted by delta; races not on SUSQ cannot be hedged)</span></h2>
     <div class="tablewrap" style="margin-bottom:18px">
@@ -263,7 +300,7 @@ function render(d) {
   document.getElementById("sumA").innerHTML =
     (d.a_cap != null ? card("Capital used", fmt(d.a_capital, 0), `of ${fmt(d.a_cap, 0)} cap · ${d.a_capital > d.a_cap ? "over: no new buys, swaps only" : fmt(d.a_cap - d.a_capital, 0) + " left to buy"}`,
                             d.a_capital > d.a_cap ? "neg" : "") : "") +
-    card("Pairs held", fmt(d.pairs, 0), `${d.races} races`) +
+    card("Pairs held", fmt(d.pairs, 0), `${d.rows.filter(r => r.pairs > 0).length} races`) +
     card("Locked on held pairs", "+" + fmt(locked), "pairs pay 1 − what they cost") +
     card("Trades, last 24h", fmt(((a24.buy || {}).orders || 0) + ((a24.swap || {}).orders || 0) + ((a24.exit || {}).orders || 0), 0),
          a24.buy_edge == null ? "" : `avg buy edge ${fmt(a24.buy_edge, 4)}`);
@@ -286,7 +323,7 @@ function render(d) {
     `<tr><td>${new Date(t.ts).toLocaleTimeString()}</td><td class="k-${t.kind}">${t.kind}</td>
       <td>${esc(t.race)}</td><td>${fmt(t.pairs, 0)}</td><td>${fmt(t.price, 4)}</td></tr>`).join("");
 
-  document.getElementById("rows").innerHTML = d.rows.map(r => {
+  document.getElementById("rows").innerHTML = d.rows.filter(r => r.pairs > 0).map(r => {
     const e = r.current_edge;
     const cls = e == null ? "e2" : e <= 0.005 ? "e0" : e <= 0.02 ? "e1" : "e2";
     return `<tr><td>${esc(r.race)}</td><td>${fmt(r.pairs, 0)}</td><td>${fmt(r.avg_cost, 4)}</td>
@@ -328,6 +365,13 @@ function renderB(b) {
   const m = b.maker || {};
   document.getElementById("mcards").innerHTML = ["1h", "6h", "24h"].filter(w => m[w]).map(w =>
     card(`Fills, last ${w}`, fmt(m[w].fills, 0), `${fmt(m[w].shares, 0)} shares`)).join("");
+  const mv = b.maker_view || { races: [] };
+  const lg = x => x === "D" ? "Dem" : "Rep";
+  document.getElementById("mrows").innerHTML = mv.races.map(r => `<tr><td>${esc(r.race)}</td><td>${fmt(r.pairs, 0)}</td>
+    <td>${fmt(r.book.D.bid, 3)} / ${fmt(r.book.D.ask, 3)}</td><td>${fmt(r.book.R.bid, 3)} / ${fmt(r.book.R.ask, 3)}</td>
+    <td>${fmt(r.ask_sum, 3)}</td><td>${fmt(r.bid_sum, 3)}</td><td>${fmt(r.cheapest_other, 3)}</td>
+    <td style="text-align:left">${r.quotes.map(q => `<span class="k-${q.side.toUpperCase()}">${q.side}</span> ${fmt(q.qty, 0)} NO ${lg(q.leg)} @ ${fmt(q.price, 3)}`).join("<br>") || '<span class="n">none</span>'}</td></tr>`).join("")
+    || `<tr><td colspan="8" class="n">No held race with at least ${fmt(mv.min_pairs, 0)} pairs.</td></tr>`;
   document.getElementById("mrecent").innerHTML = (m.recent || []).map(t => tradeRow(t, false)).join("")
     || `<tr><td colspan="6" class="n">No pair-maker fills since order tagging began.</td></tr>`;
 }
@@ -486,77 +530,74 @@ function drawChart() {
   const leave = () => { tip.hidden = true; cross.setAttribute("visibility", "hidden"); };
   svg.onmousemove = move; svg.ontouchmove = move; svg.onmouseleave = leave; svg.ontouchend = leave;
 }
-// ---------- P&L by strategy (one line each; additive, same time window as the equity curve) ----------
-const SSER = [
-  { key: "A", name: "A arbitrage", color: "var(--s1)" }, { key: "B", name: "B pair maker", color: "var(--s4)" },
-  { key: "C", name: "C Kalshi MM", color: "var(--s3)" }, { key: "D", name: "D Senate stat arb", color: "var(--s2)" },
-];
-let sWinHours = 0;                      // own window for the strategy chart; default: since the Cup began
-document.getElementById("swinbar").addEventListener("click", ev => {
-  const btn = ev.target.closest("button");
-  if (!btn) return;
-  sWinHours = +btn.dataset.w;
-  drawStratChart();
-});
-function drawStratChart() {
-  const svg = document.getElementById("schart");
-  if (!svg || svg.closest("section").hidden) return;
-  const W = svg.clientWidth || 600, H = 240, L = 58, R = 92, T = 10, B = 26;
-  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
-  // since the Cup began: the 10-minute grid (B, C, D at cost) until market-value points were recorded,
-  // then the recorded points (A: pairs pay 1, legs at cost; B, C, D: current SUSQ market value)
-  const live = hist.filter(p => p.s2).map(p => ({ t: p.t, s: p.s2 }));
+// ---------- one equity curve per strategy (in its own tab, own time window) ----------
+const SCOL = { A: "var(--s1)", B: "var(--s4)", C: "var(--s3)", D: "var(--s2)" };
+const SNAME = { A: "A arbitrage", B: "B pair maker", C: "C Kalshi market making", D: "D Senate stat arb" };
+const sWin = { A: 0, B: 0, C: 0, D: 0 };
+["A", "B", "C", "D"].forEach(k => document.getElementById("w" + k).addEventListener("click", ev => {
+  const btn = ev.target.closest("button"); if (!btn) return;
+  sWin[k] = +btn.dataset.w; drawStrat(k);
+}));
+function stratPoints(k) {
+  // the 10-minute grid since the Cup began (B, C, D at cost) until market-value points were recorded,
+  // then those points (A: pairs pay 1, legs at cost; B, C, D: current SUSQ market value)
+  const live = hist.filter(p => p.s2 && p.s2[k] != null).map(p => ({ t: p.t, v: p.s2[k] }));
   const firstLive = live.length ? new Date(live[0].t).getTime() : Infinity;
   let pts = ((snap && snap.strategy_series) || []).filter(p => new Date(p.t).getTime() < firstLive)
-    .map(p => ({ t: p.t, s: { A: p.A, B: p.B, C: p.C, D: p.D } })).concat(live);
-  document.querySelectorAll("#swinbar button").forEach(btn => btn.setAttribute("aria-pressed", String(+btn.dataset.w === sWinHours)));
-  if (pts.length && sWinHours) {
+    .map(p => ({ t: p.t, v: p[k] })).concat(live);
+  if (pts.length && sWin[k]) {
     const end = new Date(pts[pts.length - 1].t).getTime();
-    pts = pts.filter(p => new Date(p.t).getTime() >= end - sWinHours * 3600e3);
+    pts = pts.filter(p => new Date(p.t).getTime() >= end - sWin[k] * 3600e3);
   }
-  const now = (snap && snap.strategy_now) || {};
-  const total = ["A", "B", "C", "D"].reduce((a, k) => a + (now[k] || 0), 0);
-  document.getElementById("ssince").textContent =
-    `Since the Cup began. A: pairs pay 1, single legs at cost. B, C, D: current SUSQ market value (mid), recorded from ${live.length ? new Date(live[0].t).toLocaleString() : "now on"}; before that at cost. Together ${(total >= 0 ? "+" : "") + fmt(total)}; the main curve can differ because legs held by different strategies pair up in the total.`;
+  return { pts, liveFrom: live.length ? live[0].t : null };
+}
+function drawStrat(k) {
+  const svg = document.getElementById("c" + k);
+  if (!svg || svg.closest("section").hidden) return;
+  document.querySelectorAll(`#w${k} button`).forEach(b => b.setAttribute("aria-pressed", String(+b.dataset.w === sWin[k])));
+  const W = svg.clientWidth || 600, H = 220, L = 58, R = 70, T = 10, B = 26;
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  const { pts, liveFrom } = stratPoints(k);
+  const now = ((snap && snap.strategy_now) || {})[k];
+  document.getElementById("l" + k).innerHTML = `<span><i style="background:${SCOL[k]}"></i>${SNAME[k]}: <b>${fmt(now)}</b></span>`;
+  document.getElementById("n" + k).textContent = k === "A"
+    ? "Its own trades only: cash flow + what it holds, a pair paying 1 and single legs at cost (like the main curve)."
+    : `Its own trades only: cash flow + what it holds at the current SUSQ market value (mid), recorded from ${liveFrom ? new Date(liveFrom).toLocaleString() : "now on"}; before that at cost.`;
   if (pts.length < 2) {
     svg.innerHTML = `<text x="${W / 2}" y="${H / 2}" text-anchor="middle" style="fill:var(--muted);font-size:12px">Waiting for data…</text>`;
-    document.getElementById("slegend").innerHTML = SSER.map(s => `<span><i style="background:${s.color}"></i>${s.name}: <b>${fmt(now[s.key])}</b></span>`).join("");
     return;
   }
-  const ts = pts.map(p => new Date(p.t).getTime());
-  const vals = pts.flatMap(p => SSER.map(s => p.s[s.key])).filter(v => v != null).concat([0]);
-  let lo = Math.min(...vals), hi = Math.max(...vals); const pad = (hi - lo) * 0.08 || 20; lo -= pad; hi += pad;
+  const ts = pts.map(p => new Date(p.t).getTime()), vals = pts.map(p => p.v).concat([0]);
+  let lo = Math.min(...vals), hi = Math.max(...vals); const pad = (hi - lo) * 0.08 || 10; lo -= pad; hi += pad;
   const t0 = ts[0], t1 = ts[ts.length - 1];
   const x = t => L + (W - L - R) * (t - t0) / ((t1 - t0) || 1), y = v => T + (H - T - B) * (1 - (v - lo) / (hi - lo));
   let g = "";
   for (const v of niceTicks(lo, hi)) g += `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="var(--grid)"/><text x="${L - 6}" y="${y(v) + 4}" text-anchor="end" style="fill:var(--muted);font-size:11px">${fmt(v, 0)}</text>`;
   g += `<line x1="${L}" x2="${W - R}" y1="${y(0)}" y2="${y(0)}" stroke="var(--muted)" stroke-dasharray="4 4"/>`;
-  for (let k = 0; k <= 3; k++) { const t = t0 + (t1 - t0) * k / 3, dt = new Date(t);
+  for (let i = 0; i <= 3; i++) {
+    const t = t0 + (t1 - t0) * i / 3, dt = new Date(t);
     const lab = (t1 - t0) > 36 * 3600e3 ? dt.toLocaleDateString([], { month: "short", day: "numeric" }) : dt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-    g += `<text x="${x(t)}" y="${H - 6}" text-anchor="${k === 0 ? "start" : k === 3 ? "end" : "middle"}" style="fill:var(--muted);font-size:11px">${lab}</text>`; }
-  for (const s of SSER) {
-    let d = "", prevY = null;
-    pts.forEach((p, i) => { const v = p.s[s.key]; if (v == null) return; const xi = x(ts[i]).toFixed(1), yi = y(v).toFixed(1);
-      d += prevY == null ? `M${xi},${yi}` : `L${xi},${prevY}L${xi},${yi}`; prevY = yi; });
-    const last = pts[pts.length - 1].s[s.key];
-    g += `<path d="${d}" fill="none" stroke="${s.color}" stroke-width="2"/>` +
-         (last == null ? "" : `<circle cx="${x(t1)}" cy="${y(last)}" r="4" fill="${s.color}" stroke="var(--card)" stroke-width="2"/><text x="${W - R + 8}" y="${y(last) + 4}" style="fill:var(--text);font-size:11px">${s.key} ${fmt(last, 0)}</text>`);
+    g += `<text x="${x(t)}" y="${H - 6}" text-anchor="${i === 0 ? "start" : i === 3 ? "end" : "middle"}" style="fill:var(--muted);font-size:11px">${lab}</text>`;
   }
-  g += `<line id="scross" y1="${T}" y2="${H - B}" stroke="var(--muted)" visibility="hidden"/>`;
+  let d = "", prevY = null;
+  pts.forEach((p, i) => { const xi = x(ts[i]).toFixed(1), yi = y(p.v).toFixed(1); d += prevY == null ? `M${xi},${yi}` : `L${xi},${prevY}L${xi},${yi}`; prevY = yi; });
+  const last = pts[pts.length - 1].v;
+  g += `<path d="${d}" fill="none" stroke="${SCOL[k]}" stroke-width="2"/><circle cx="${x(t1)}" cy="${y(last)}" r="4" fill="${SCOL[k]}" stroke="var(--card)" stroke-width="2"/>` +
+       `<text x="${W - R + 8}" y="${y(last) + 4}" style="fill:var(--text);font-size:11px">${fmt(last, 0)}</text><line id="x${k}" y1="${T}" y2="${H - B}" stroke="var(--muted)" visibility="hidden"/>`;
   svg.innerHTML = g;
-  document.getElementById("slegend").innerHTML = SSER.map(s => `<span><i style="background:${s.color}"></i>${s.name}: <b>${fmt(now[s.key] != null ? now[s.key] : pts[pts.length - 1].s[s.key])}</b></span>`).join("");
-  const tip = document.getElementById("stip"), cross = svg.querySelector("#scross");
+  const tip = document.getElementById("t" + k), cross = svg.querySelector("#x" + k);
   svg.onmousemove = ev => {
     const rect = svg.getBoundingClientRect(), px = (ev.clientX - rect.left) * (W / rect.width);
     const t = t0 + (px - L) / (W - L - R) * ((t1 - t0) || 1);
-    let i = 0, best = Infinity; ts.forEach((v, k) => { const dd = Math.abs(v - t); if (dd < best) { best = dd; i = k; } });
+    let i = 0, best = Infinity; ts.forEach((v, j) => { const dd = Math.abs(v - t); if (dd < best) { best = dd; i = j; } });
     cross.setAttribute("x1", x(ts[i])); cross.setAttribute("x2", x(ts[i])); cross.setAttribute("visibility", "visible");
     tip.hidden = false;
-    tip.innerHTML = `${new Date(pts[i].t).toLocaleString()}<br>` + SSER.map(s => `<i style="background:${s.color}"></i>${s.key}: ${fmt(pts[i].s[s.key])}`).join("<br>");
+    tip.innerHTML = `${new Date(pts[i].t).toLocaleString()}<br><i style="background:${SCOL[k]}"></i>${fmt(pts[i].v)}`;
     tip.style.left = Math.min(Math.max(x(ts[i]) / W * rect.width + 12, 0), rect.width - tip.offsetWidth - 4) + "px";
   };
   svg.onmouseleave = () => { tip.hidden = true; cross.setAttribute("visibility", "hidden"); };
 }
+function drawAllStrats() { ["A", "B", "C", "D"].forEach(drawStrat); }
 
 document.getElementById("winbar").addEventListener("click", ev => {
   const btn = ev.target.closest("button");
@@ -564,7 +605,7 @@ document.getElementById("winbar").addEventListener("click", ev => {
   winHours = +btn.dataset.w;
   drawChart();
 });
-window.addEventListener("resize", () => { drawChart(); drawStratChart(); });
+window.addEventListener("resize", () => { drawChart(); drawAllStrats(); });
 
 // ---------- tabs ----------
 function showTab(t) {
@@ -573,7 +614,8 @@ function showTab(t) {
   document.querySelectorAll("section[data-panel]").forEach(s => s.hidden = s.dataset.panel !== t);
   try { localStorage.setItem("tab", t); } catch (e) { /* storage may be blocked */ }
   if (location.hash !== "#" + t) history.replaceState(null, "", "#" + t);
-  if (t === "overview") { drawChart(); drawStratChart(); }
+  if (t === "overview") drawChart();
+  drawAllStrats();
 }
 document.querySelector(".tabs").addEventListener("click", ev => {
   const b = ev.target.closest("button[data-tab]"); if (b) showTab(b.dataset.tab);
@@ -599,7 +641,7 @@ async function load() {
   } catch (e) { /* curve keeps its last data */ }
   renderActivity();
   drawChart();
-  drawStratChart();
+  drawAllStrats();
 }
 load();
 setInterval(load, 60000);
