@@ -95,6 +95,8 @@ def build(c):
         b["maker"] = maker_block(attrib["B"])                                          # B: pair maker
         b["attribution"] = {k: len(v) for k, v in attrib.items()}
     d_view = strategy_d_block(c, quotes_all(c, t["id"], legs_of), legs_of, d_ledger, attrib["D"])
+    d_cost = (d_view or {}).get("holdings_cost") or 0.0
+    d_fair_minus_cost = ((d_view or {}).get("holdings_fair") or 0.0) - d_cost if d_view and "holdings_fair" in d_view else 0.0
     return {
         "d": d_view,
         "b": b,
@@ -111,7 +113,10 @@ def build(c):
         "races": len(rows),
         "cost_basis": round(sum(p["costBasis"] for legs in races.values() for p in legs.values()), 2),
         # every NO+NO pair pays 1; unpaired shares (legs briefly unequal) at their cost
-        "value_at_settlement": round(cash + total_pairs + sum(r["unpaired_value"] for r in rows), 2),
+        # D's shares are taken out of the A/B/C views, so they are added back here (at cost, like C's positions)
+        "value_at_settlement": round(cash + total_pairs + sum(r["unpaired_value"] for r in rows) + d_cost, 2),
+        "value_fair": round(cash + total_pairs + sum(r["unpaired_value"] for r in rows) + d_cost
+                            + ((b or {}).get("leftover_fair_minus_cost") or 0) + d_fair_minus_cost, 2),
         "mark_to_market": round(cash + pos["summary"]["totalMarketValue"], 2),
         "warnings": warnings,
         "rows": rows,
@@ -237,6 +242,21 @@ def quotes_all(c, tid, legs_of):
     return {q["exchangeId"]: q for q in r["data"]}
 
 
+def d_cost_basis(fills, until=None):
+    """Cost of what D still holds, per exchange (average cost; sells release cost pro rata)."""
+    qty, cost = {}, {}
+    for f in sorted(fills, key=lambda f: f["ts"]):
+        if until is not None and f["ts"] > until:
+            break
+        e, q, px = f["ex"], f["qty"], f["price"] or 0
+        if f["side"] == "BUY":
+            qty[e] = qty.get(e, 0) + q; cost[e] = cost.get(e, 0) + q * px
+        elif qty.get(e, 0) > 0:
+            cut = min(q, qty[e]) / qty[e]
+            cost[e] -= cost[e] * cut; qty[e] -= min(q, qty[e])
+    return cost
+
+
 def strategy_d_block(c, quotes, legs_of, ledger, fills):
     """Strategy D: model (rho, deltas) recomputed from Kalshi, D's ledger vs its hedge targets, its trades
     and P&L (cash flow + holdings at the SUSQ bid, and at Kalshi fair)."""
@@ -283,11 +303,13 @@ def strategy_d_block(c, quotes, legs_of, ledger, fills):
         fair_no[e] = k_r if x == "D" else 1 - k_r
     bid_val = sum(q * (noq(e)["bid"] or 0) for e, q in ledger.items())
     fair_val = sum(q * fair_no.get(e, 0) for e, q in ledger.items())
+    cost_val = sum(d_cost_basis(fills).values())
     return {"kalshi_r": round(k_r, 4), "susq_r": None if susq_r is None else round(susq_r, 4),
             "gap": None if susq_r is None else round(k_r - susq_r, 4), "rho": None if rho is None else round(rho, 4),
             "direction": direction, "control": n, "entry_gap": config.D_ENTRY_GAP, "exit_gap": config.D_EXIT_GAP,
             "capital": config.D_CAPITAL, "band": config.D_BAND_FRAC, "races": rows,
             "pnl_bid": round(flow + bid_val, 2), "pnl_fair": round(flow + fair_val, 2),
+            "holdings_cost": round(cost_val, 2), "holdings_fair": round(fair_val, 2),
             "recent": [{k: f[k] for k in ("ts", "race", "party", "side", "qty", "price", "kind")} for f in fills[-25:][::-1]]}
 
 

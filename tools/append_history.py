@@ -16,6 +16,11 @@ try:
 except (OSError, ValueError):
     hist = []
 b = snap.get("b") or {}
-fair = None if b.get("leftover_fair_minus_cost") is None else round(snap["value_at_settlement"] + b["leftover_fair_minus_cost"], 2)
-hist.append({"t": snap["updated"], "settle": snap["value_at_settlement"], "mtm": snap["mark_to_market"], "fair": fair})
+fair = snap.get("value_fair")                     # C and D positions at Kalshi fair (snapshot computes it)
+if fair is None and b.get("leftover_fair_minus_cost") is not None:
+    fair = round(snap["value_at_settlement"] + b["leftover_fair_minus_cost"], 2)
+point = {"t": snap["updated"], "settle": snap["value_at_settlement"], "mtm": snap["mark_to_market"], "fair": fair}
+if "value_fair" in snap:
+    point["d_fixed"] = True                       # D already counted by the snapshot (tools/fix_history_d.py skips it)
+hist.append(point)
 json.dump(hist[-MAX_POINTS:], open(hist_path, "w", encoding="utf-8"), separators=(",", ":"))

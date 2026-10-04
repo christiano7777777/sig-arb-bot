@@ -14,6 +14,8 @@ if git clone -q --depth 1 -b dashboard-data "$remote" "$work/prev" 2>/dev/null; 
     cp "$work/prev/history.json" "$work/history.json" 2>/dev/null || true
     cp "$work/prev/order_tags.json" "$work/order_tags.json" 2>/dev/null || true   # orderId -> strategy (no prices)
 fi
+# one-off: points recorded while D's shares were missing from value at settlement get D added back
+python tools/fix_history_d.py "$work/order_tags.json" "$work/history.json" 2>> snapshot.err || true
 # fill in the curve before the first live point by replaying the trade history since the Cup began
 if python tools/backfill_history.py > "$work/backfill.json" 2>> snapshot.err; then
     python tools/merge_history.py "$work/backfill.json" "$work/history.json" 2>> snapshot.err
