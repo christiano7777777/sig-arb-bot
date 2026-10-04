@@ -95,6 +95,12 @@ B_CLOSE_CLIP = 500         # closing: shares offered at the best ask per round (
 B_CLOSE_BID_RATIO = 0.5    # closing: buy-back bid = ratio * clip * (1 - leftover / B_CLOSE_REF)
 B_SKEW = 0.02             # holding: reservation price moves this far from fair at full race-cap exposure (user: slight)
 B_TOTAL_CAP_FRAC = 0.30    # max shares at risk over all races, as a fraction of portfolio value (user: 30%)
+MAKER_ENABLED = True       # pair maker (pair_maker.py): resting two-sided pair quotes on the largest held races
+MAKER_RACES = 6            # how many held races (largest by pairs) get pair quotes
+MAKER_MIN_PAIRS = 500      # ... and only races holding at least this many pairs
+MAKER_CLIP = 500           # pairs per side per race
+MAKER_LIFE_S = 300         # quotes rest this long; re-posted only on expiry or when the best price moves
+MAKER_MAX_ORDERS = 8       # maker writes per round (cancels + posts), inside the 30 writes/min budget
 B_MAX_ORDERS_PER_ROUND = 10  # keeps B inside the 30 writes/min account budget it shares with the arb
 
 # Execution

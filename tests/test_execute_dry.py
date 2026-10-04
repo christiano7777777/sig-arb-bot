@@ -64,7 +64,7 @@ class FakeClient:
 
 
 def make_runner(fake, min_edge=0.005, exposure=None, capital=50_000, reserve=50_000, race_cap=5_000,
-                denylist=(), extra=False, b_enabled=False):
+                denylist=(), extra=False, b_enabled=False, maker=False):
     # pin every setting the tests rely on, so editing config.py cannot silently change a test
     config.MIN_EDGE, config.MAX_UNHEDGED_EXPOSURE = min_edge, exposure
     config.MAX_CAPITAL_PER_RUN, config.RESERVE, config.PER_RACE_CAP = capital, reserve, race_cap
@@ -73,6 +73,9 @@ def make_runner(fake, min_edge=0.005, exposure=None, capital=50_000, reserve=50_
     config.EXTRA_CAPITAL_ENABLED, config.EXTRA_MIN_EDGE, config.HARD_RESERVE = extra, 0.015, 1_000
     config.ROTATE_MAX_SPEND = 2_000
     config.B_ENABLED = b_enabled
+    config.MAKER_ENABLED = maker
+    config.MAKER_RACES, config.MAKER_MIN_PAIRS, config.MAKER_CLIP = 6, 500, 500
+    config.MAKER_LIFE_S, config.MAKER_MAX_ORDERS, config.ROTATE_MIN_GAIN = 300, 8, 0.001
     execute.STATE_DIR = Path(__file__).parent / "_state_test"
     execute.STOP_FILE = execute.STATE_DIR / "STOP"
     execute.STOP_FILE.unlink(missing_ok=True)          # a halt in an earlier test must not leak
@@ -659,6 +662,43 @@ def test_b_orders_per_round_are_limited():
     fake, r = _two_race_b(30_000, 10_000, max_orders=1)
     r.b.step(r.quotes(), r.positions())
     assert len(_b_orders(r)) == 1
+
+
+def _maker_runner(held, other_race_books):
+    import kalshi
+    config.B_RACES = {"Delaware Senate": {"event": "SENATEDE-26", "D": "SENATEDE-26-D", "R": "SENATEDE-26-R"}}
+    config.B_MIN_FAVOURITE, config.B_MAX_ORDERS_PER_ROUND, config.B_TOTAL_CAP_FRAC = 0.95, 10, 0.10
+    kalshi.fair = lambda t, m: {"ok": False, "why": "test"}
+    fake = FakeClient({"Delaware Senate": DE, "Other race": other_race_books}, balance=1_000)
+    fake.held = {fake.ex_of("Delaware Senate", x): (-held, 0.5 * held) for x in "DR"}
+    return fake, make_runner(fake, exposure=500, b_enabled=True, maker=True)
+
+
+CHEAP_OTHER = {"D": ([(0.5, 9000)], [(0.51, 9000)]), "R": ([(0.535, 9000)], [(0.54, 9000)])}   # NO asks 0.5 + 0.465 = 0.965
+DEAR_OTHER = {"D": ([(0.5, 9000)], [(0.51, 9000)]), "R": ([(0.53, 9000)], [(0.54, 9000)])}    # NO asks 0.5 + 0.47 = 0.97
+
+
+def test_maker_quotes_both_legs_at_the_best_asks_when_kalshi_is_untrusted():
+    # no Kalshi needed for pair quotes; B itself stays out. Delaware asks sum 0.97 >= other race 0.965 + 0.001
+    fake, r = _maker_runner(37_588, CHEAP_OTHER)
+    r.b.step(r.quotes(), r.positions())
+    sells = [o for o in _b_orders(r) if o["action"] == "sell"]
+    assert len(sells) == 2 and {o["quantity"] for o in sells} == {500}
+    for o in sells:                                                   # exactly at the best NO ask
+        assert abs(o["price"] - (1 - max(p for p, _ in fake.books[o["exchangeId"]][0]))) < 1e-9
+
+
+def test_maker_not_on_small_holdings():
+    fake, r = _maker_runner(300, CHEAP_OTHER)
+    r.b.step(r.quotes(), r.positions())
+    assert _b_orders(r) == []
+
+
+def test_maker_compares_with_other_races_not_its_own_pair():
+    # only another race at 0.97 (= Delaware's own 0.97): no gain from rotating, so no pair asks
+    fake, r = _maker_runner(37_588, DEAR_OTHER)
+    r.b.step(r.quotes(), r.positions())
+    assert not [o for o in _b_orders(r) if o["action"] == "sell"]
 
 
 def test_arb_trade_allowed_on_b_race_with_unequal_legs():

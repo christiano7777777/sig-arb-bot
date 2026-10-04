@@ -79,7 +79,8 @@ class Runner:
         self.baskets = [Basket(self, b["name"], b["legs"]) for b in found]
         print(f"tournament {self.tour['slug']}  run_id {self.run_id}  mode {'LIVE' if live else 'DRY RUN'}")
         print(f"{len(self.baskets)} two-party races; skipped: " + "; ".join(f"{r} ({why})" for r, why in skipped))
-        self.b_resting = set()     # exchanges with a resting strategy-B quote
+        self.b_resting = set()     # exchanges with a resting strategy-B / pair-maker quote
+        self.maker_live = {}       # (exchangeId, side) -> (price, expiry epoch) of resting pair-maker quotes
         self.b = BExecutor(self) if config.B_ENABLED else None
 
     # ---- reads -----------------------------------------------------------
@@ -127,6 +128,8 @@ class Runner:
         if not self.live:
             return
         for ex in exchange_ids:
+            for key in [k for k in self.maker_live if k[0] == ex]:   # cancel-all removes maker quotes too
+                del self.maker_live[key]
             r = self.c.post("/orders/cancel-all", {"exchangeId": ex, "tournamentId": self.tour["id"]})
             if r.get("cancelled"):
                 print(f"  cancelled {r['cancelled']} resting order(s) on exchange {ex}")

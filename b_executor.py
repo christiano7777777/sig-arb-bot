@@ -4,6 +4,7 @@
 Races: every race in config.B_RACES (kalshi_map.json) that holds shares on either leg (user, 2026-10-04).
 Caps: total = B_TOTAL_CAP_FRAC of portfolio value; each race gets the total x its share of the pairs
 held in those races (bigger holdings, bigger position). At most B_MAX_ORDERS_PER_ROUND orders per round.
+Then the pair maker (pair_maker.py) keeps resting pair quotes at the touch on the largest held races.
 
 Every B_INTERVAL_S seconds, per race:
   1. fair value from Kalshi (public API); no trading on that race if it is not trusted
@@ -20,6 +21,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import config
 import kalshi
+import pair_maker
 import strategy_b
 from arb_math import no_asks_from_yes_bids, no_bids_from_yes_asks
 from susq_client import ApiError
@@ -144,9 +146,45 @@ class BExecutor:
                 spend -= qty * o["price"]
             self.send(b, exchange, o, qty)
             sent += 1
+        if config.MAKER_ENABLED:
+            self.make_pairs(q, active, fairs, race_cap, room, spend)
+
+    def make_pairs(self, q, active, fairs, race_cap, room, spend):
+        """Pair maker on the largest held races: keep resting pair quotes at the touch (pair_maker.py)."""
+        # NO ask sum of every race: the pair a swap could rotate the proceeds into
+        pair_ask = {b.name: sum(1 - q[e]["bestBid"] for e in b.ex) for b in self.r.baskets
+                    if all(q.get(e, {}).get("bestBid") is not None for e in b.ex)}
+        big = sorted(((b, ex, h, k) for (b, ex, h), k in zip(active, fairs) if min(h.values()) >= config.MAKER_MIN_PAIRS),
+                     key=lambda t: -min(t[2].values()))[:config.MAKER_RACES]
+        writes, now = 0, time.time()
+        for b, ex, h, k in big:
+            fav, rroom = None, INF
+            if k["ok"] and max(k["p"].values()) >= config.B_MIN_FAVOURITE:
+                fav = max(k["p"], key=k["p"].get)
+                und = "R" if fav == "D" else "D"
+                rroom = max(0.0, min(race_cap[b.name] - max(h[und] - h[fav], 0.0), room))
+            books = {x: self.top_book(q, ex[x]) for x in "DR"}
+            cheapest = min((v for n, v in pair_ask.items() if n != b.name), default=None)   # another race
+            want = {(ex[o["leg"]], o["side"]): o for o in pair_maker.pair_quotes(books, h, cheapest, spend, fav, rroom)}
+            for key, o in want.items():
+                if o["side"] == "buy":
+                    spend -= o["qty"] * o["price"]
+            # drop resting quotes that are no longer wanted at exactly this price (stale or off the touch)
+            for e in set(ex.values()):
+                live = {k2: v for k2, v in self.r.maker_live.items() if k2[0] == e}
+                stale = [k2 for k2, (px, exp) in live.items()
+                         if k2 not in want or abs(want[k2]["price"] - px) > 1e-9 or exp < now + 5]
+                if stale and writes < config.MAKER_MAX_ORDERS:
+                    self.r.cancel_all([e])
+                    writes += 1
+            for key, o in want.items():
+                if key in self.r.maker_live or writes >= config.MAKER_MAX_ORDERS:
+                    continue                                       # already resting at this price
+                self.send(b, key[0], {**o, "kind": "maker", "edge_vs_fair": 0.0}, o["qty"])
+                writes += 1
 
     def send(self, b, exchange, o, qty):
-        expiry = config.ORDER_EXPIRY_S if o["kind"] == "take" else max(5, config.B_INTERVAL_S - 5)
+        expiry = {"take": config.ORDER_EXPIRY_S, "maker": config.MAKER_LIFE_S}.get(o["kind"], max(5, config.B_INTERVAL_S - 5))
         body = {"idempotencyKey": self.r.next_key(f"b-{o['kind']}"), "exchangeId": exchange, "side": "no",
                 "action": o["side"], "quantity": int(qty), "price": o["price"],
                 "expirationDate": now_plus(expiry), "tournamentId": self.r.tour["id"]}
@@ -164,5 +202,7 @@ class BExecutor:
         print(f"    traded {d.get('quantityTraded')} open={d.get('open')} reason={d.get('terminalReasonCode')}")
         if o["kind"] == "take" and d.get("open"):
             self.r.cancel_all([exchange])                         # no resting remainder below the best ask
-        elif o["kind"] == "quote" and d.get("open"):
-            self.r.b_resting.add(exchange)
+        elif o["kind"] in ("quote", "maker") and d.get("open"):
+            self.r.b_resting.add(exchange)                        # the arb cancels these before trading here
+            if o["kind"] == "maker":
+                self.r.maker_live[(exchange, o["side"])] = (o["price"], time.time() + expiry)

@@ -5,6 +5,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import config  # noqa: E402
+import pair_maker  # noqa: E402
 import strategy_b  # noqa: E402
 
 # Delaware-like race at 06:55 UTC 2026-10-04: SUSQ NO_D 0.12/0.125, NO_R 0.84/0.845; Kalshi p_D 0.986
@@ -188,6 +189,35 @@ def test_quote_behind_the_touch_does_not_starve_a_quote_at_the_touch():
                           cash=1_000, race_cap=2_916)
     assert not orders(r, leg="R", side="sell", kind="quote")                  # behind the touch: not produced
     assert orders(r, leg="D", side="buy", kind="quote")                       # the buy-back at the best bid survives
+
+
+def pm():
+    config.MAKER_CLIP, config.ROTATE_MIN_GAIN, config.MIN_EDGE = 500, 0.001, 0.005
+
+
+def test_maker_asks_both_legs_at_best_ask_when_a_swap_can_redeploy():
+    pm()   # ask sum 0.125 + 0.845 = 0.97 >= cheapest new pair 0.965 + 0.001
+    o = pair_maker.pair_quotes(BOOKS, {"D": 9_000, "R": 9_000}, 0.965, cash=0)
+    assert sorted((x["leg"], x["side"], x["price"], x["qty"]) for x in o) == [("D", "sell", 0.125, 500), ("R", "sell", 0.845, 500)]
+
+
+def test_maker_does_not_sell_when_no_swap_could_use_the_cash():
+    pm()
+    assert not [x for x in pair_maker.pair_quotes(BOOKS, {"D": 9_000, "R": 9_000}, 0.975, cash=0) if x["side"] == "sell"]
+
+
+def test_maker_bids_only_below_one_and_within_cash():
+    pm()   # bid sum 0.12 + 0.84 = 0.96 <= 0.995
+    o = [x for x in pair_maker.pair_quotes(BOOKS, {"D": 0, "R": 0}, 0.965, cash=96) if x["side"] == "buy"]
+    assert sorted((x["leg"], x["price"], x["qty"]) for x in o) == [("D", 0.12, 100), ("R", 0.84, 100)]
+    rich = {"D": {"bids": [(0.16, 10)], "asks": [(0.17, 10)]}, "R": {"bids": [(0.84, 10)], "asks": [(0.85, 10)]}}
+    assert not [x for x in pair_maker.pair_quotes(rich, {"D": 0, "R": 0}, 0.965, cash=1e6) if x["side"] == "buy"]
+
+
+def test_maker_ask_size_limited_by_b_room_on_the_favourite():
+    pm()
+    o = pair_maker.pair_quotes(BOOKS, {"D": 9_000, "R": 9_000}, 0.965, cash=0, fav="D", room=120)
+    assert {x["qty"] for x in o if x["side"] == "sell"} == {120}
 
 
 def test_null_case_fair_prices_no_takes():
