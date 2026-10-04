@@ -108,6 +108,10 @@
     <h2>P&amp;L by strategy</h2>
     <p class="note" id="ssince" style="margin:-4px 0 8px"></p>
     <div class="chartcard" style="margin-bottom:18px">
+      <div class="winbar" id="swinbar" role="group" aria-label="Time window for P&L by strategy">
+        <button data-w="1">1h</button><button data-w="6">6h</button><button data-w="24">24h</button>
+        <button data-w="168">7d</button><button data-w="0">All (since start of Cup)</button>
+      </div>
       <div class="legend" id="slegend"></div>
       <div class="chartwrap">
         <svg id="schart" style="width:100%;height:240px;display:block;touch-action:pan-y" role="img" aria-label="P&L by strategy over time"></svg>
@@ -487,6 +491,13 @@ const SSER = [
   { key: "A", name: "A arbitrage", color: "var(--s1)" }, { key: "B", name: "B pair maker", color: "var(--s4)" },
   { key: "C", name: "C Kalshi MM", color: "var(--s3)" }, { key: "D", name: "D Senate stat arb", color: "var(--s2)" },
 ];
+let sWinHours = 0;                      // own window for the strategy chart; default: since the Cup began
+document.getElementById("swinbar").addEventListener("click", ev => {
+  const btn = ev.target.closest("button");
+  if (!btn) return;
+  sWinHours = +btn.dataset.w;
+  drawStratChart();
+});
 function drawStratChart() {
   const svg = document.getElementById("schart");
   if (!svg || svg.closest("section").hidden) return;
@@ -498,9 +509,10 @@ function drawStratChart() {
   const firstLive = live.length ? new Date(live[0].t).getTime() : Infinity;
   let pts = ((snap && snap.strategy_series) || []).filter(p => new Date(p.t).getTime() < firstLive)
     .map(p => ({ t: p.t, s: { A: p.A, B: p.B, C: p.C, D: p.D } })).concat(live);
-  if (pts.length && winHours) {
+  document.querySelectorAll("#swinbar button").forEach(btn => btn.setAttribute("aria-pressed", String(+btn.dataset.w === sWinHours)));
+  if (pts.length && sWinHours) {
     const end = new Date(pts[pts.length - 1].t).getTime();
-    pts = pts.filter(p => new Date(p.t).getTime() >= end - winHours * 3600e3);
+    pts = pts.filter(p => new Date(p.t).getTime() >= end - sWinHours * 3600e3);
   }
   const now = (snap && snap.strategy_now) || {};
   const total = ["A", "B", "C", "D"].reduce((a, k) => a + (now[k] || 0), 0);
@@ -551,7 +563,6 @@ document.getElementById("winbar").addEventListener("click", ev => {
   if (!btn) return;
   winHours = +btn.dataset.w;
   drawChart();
-  drawStratChart();
 });
 window.addEventListener("resize", () => { drawChart(); drawStratChart(); });
 
