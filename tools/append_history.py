@@ -24,5 +24,24 @@ if snap.get("strategy_now"):                      # value per strategy now: A se
     point["s2"] = snap["strategy_now"]
 if "value_fair" in snap:
     point["d_fixed"] = True                       # D already counted by the snapshot (tools/fix_history_d.py skips it)
+# one-snapshot glitch guard (2026-10-04 16:44: settle -9.8k for one snapshot while mark-to-market did not
+# move): a settle jump > JUMP with mtm almost unchanged is held back until the next snapshot confirms it
+JUMP, pend_path = 3000, hist_path + ".pending"
+last = hist[-1] if hist else None
+if last and abs(point["settle"] - last["settle"]) > JUMP and abs(point["mtm"] - last["mtm"]) < JUMP / 3:
+    try:
+        pend = json.load(open(pend_path, encoding="utf-8"))
+    except (OSError, ValueError):
+        pend = None
+    if not pend or abs(pend["settle"] - point["settle"]) > JUMP / 3:   # not confirmed yet: hold it back
+        json.dump(point, open(pend_path, "w", encoding="utf-8"))
+        print(f"history: settle jump {point['settle'] - last['settle']:+,.0f} held back", file=sys.stderr)
+        sys.exit(0)
+    hist.append(pend)                              # confirmed by this snapshot: keep both
+try:
+    import os
+    os.remove(pend_path)
+except OSError:
+    pass
 hist.append(point)
 json.dump(hist[-MAX_POINTS:], open(hist_path, "w", encoding="utf-8"), separators=(",", ":"))
