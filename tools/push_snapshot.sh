@@ -19,6 +19,8 @@ python tools/fix_history_d.py "$work/order_tags.json" "$work/history.json" 2>> s
 # fill in the curve before the first live point by replaying the trade history since the Cup began
 if python tools/backfill_history.py > "$work/backfill.json" 2>> snapshot.err; then
     python tools/merge_history.py "$work/backfill.json" "$work/history.json" 2>> snapshot.err
+    # recorded points get their value at settlement recomputed from the same replay (fixes bookkeeping jumps)
+    python tools/recompute_history.py "$work/backfill.json" "$work/history.json" 2>> snapshot.err
 fi
 
 while true; do

@@ -194,6 +194,19 @@ def test_d_pays_missing_hedges_before_adding_control():
     assert {(o["race"], o["qty"]) for o in res["orders"] if o["kind"] == "hedge"} == {("Texas Senate", 150), ("Maine Senate", 147)}
 
 
+def test_d_rebalances_a_state_far_off_its_own_target():
+    # live 2026-10-04: control 3,589, North Carolina target 325 held 0: the old band (10% of 3,589 = 359)
+    # skipped it; the band is per state now (10% of 325 = 33)
+    pin_d()
+    deltas = {"North Carolina Senate": 0.0906, "Texas Senate": 0.149}
+    hb = {"North Carolina Senate": {"D": {"bid": 0.145, "ask": 0.15}, "R": {"bid": 0.845, "ask": 0.85}}, **HB}
+    led = {("ctrl", "D"): 3_589, ("Texas Senate", "R"): 484}
+    res = strategy_d.plan(0.375, CTRL, deltas, hb, led, cash=3_000)
+    nc = [o for o in res["orders"] if o["race"] == "North Carolina Senate"]
+    assert nc and nc[0]["side"] == "buy" and nc[0]["qty"] == 325                        # 3,589 x 0.0906
+    assert not [o for o in res["orders"] if o["race"] == "Texas Senate"]                # 534 vs 484: inside 10%
+
+
 def test_d_spends_no_more_than_its_cash():
     pin_d()
     res = strategy_d.plan(0.375, CTRL, DEL, HB, {}, cash=300)

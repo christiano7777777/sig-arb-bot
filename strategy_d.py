@@ -78,8 +78,9 @@ def plan(k_r, ctrl_book, deltas, hedge_books, ledger, cash):
     n_h = max(held_ctrl - sum(o["qty"] for o in orders if o["kind"] == "ctrl" and o["side"] == "sell"
                               and o["leg"] == ctrl_leg), 0) if want != 0 else 0
 
-    # hedges: N x delta on the hedge side; everything on the other side (or after an exit) goes to 0
-    band = max(config.D_MIN_TRADE, config.D_BAND_FRAC * n_h)
+    # hedges: N x delta on the hedge side; everything on the other side (or after an exit) goes to 0.
+    # Band per state, relative to THAT state's target (live bug 2026-10-04: a band of 10% of the whole
+    # control position, 359 shares, was larger than every state's shortfall, so D never rebalanced)
     moves = []
     for race, d in deltas.items():
         if race not in hedge_books:
@@ -90,6 +91,7 @@ def plan(k_r, ctrl_book, deltas, hedge_books, ledger, cash):
             held = ledger.get((race, leg), 0)
             goal = tgt if (leg == hedge_leg and want != 0) else 0.0
             diff = goal - held
+            band = max(config.D_MIN_TRADE, config.D_BAND_FRAC * goal)
             if (goal == 0 and held >= 1) or abs(diff) > band:
                 moves.append((abs(diff), race, leg, diff))
     for _, race, leg, diff in sorted(moves, key=lambda t: -t[0]):

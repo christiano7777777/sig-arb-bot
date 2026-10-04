@@ -105,7 +105,7 @@ D_ENABLED = True
 D_CAPITAL = 10_000           # SUSQies for D (control leg + hedges, at cost); starts with whatever cash is free
 D_ENTRY_GAP = 0.03           # enter when |Kalshi - SUSQ| on Republican control >= this
 D_EXIT_GAP = 0.01            # exit everything once it is <= this
-D_BAND_FRAC = 0.10           # rebalance a hedge only when it is off target by > this x the control position
+D_BAND_FRAC = 0.10           # rebalance a hedge only when it is off its own target by > this x that target
 D_MIN_TRADE = 25             # ... and by at least this many shares
 D_INTERVAL_S = 60            # one D round per minute
 D_MAX_ORDERS = 6             # orders per round (largest deviations first)
