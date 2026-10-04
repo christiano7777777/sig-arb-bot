@@ -32,7 +32,9 @@ TRADE_AT_ZERO_EDGE = False  # scan.py only
 # --- Capital (user, 2026-10-04) ---
 # The arb strategy may use only the cash above RESERVE (initial 100,000 -> 50,000 for this strategy).
 # The budget is read from the live balance before every entry, so exits automatically free it again.
-RESERVE = 50_000             # core budget = cash above this, for any edge >= MIN_EDGE
+RESERVE = 50_000             # (legacy, used only when A_CAPITAL_CAP is None) core budget = cash above this
+A_CAPITAL_CAP = 50_000       # user, 2026-10-04: strategy A's pairs may tie up at most this much capital (at cost);
+                             # while over it A buys nothing new (swaps only); below it A may use free cash
 # Option B (user, 2026-10-04): the other 50k is used too, but only for book levels with edge >= EXTRA_MIN_EDGE,
 # so each extra trade pays for an early exit later. To drain back to 50% before the stat-arb starts,
 # set EXTRA_CAPITAL_ENABLED = False: the bot stops buying below RESERVE and gets cash back only from

@@ -109,6 +109,9 @@ def build(c):
         "updated": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "cash": round(cash, 2),
         "reserve": config.RESERVE,
+        # strategy A's pairs at cost (D excluded) vs its capital cap (user: at most 50,000)
+        "a_capital": round(sum(r["pairs"] * (r["avg_cost"] or 0) for r in rows), 2),
+        "a_cap": getattr(config, "A_CAPITAL_CAP", None),
         "hard_reserve": getattr(config, "HARD_RESERVE", config.RESERVE),
         "extra_enabled": getattr(config, "EXTRA_CAPITAL_ENABLED", False),
         "extra_min_edge": getattr(config, "EXTRA_MIN_EDGE", None),

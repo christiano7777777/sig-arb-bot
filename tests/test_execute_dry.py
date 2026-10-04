@@ -65,7 +65,7 @@ class FakeClient:
 
 
 def make_runner(fake, min_edge=0.005, exposure=None, capital=50_000, reserve=50_000, race_cap=5_000,
-                denylist=(), extra=False, b_enabled=False, maker=False, d_enabled=False):
+                denylist=(), extra=False, b_enabled=False, maker=False, d_enabled=False, a_cap=None):
     # pin every setting the tests rely on, so editing config.py cannot silently change a test
     config.MIN_EDGE, config.MAX_UNHEDGED_EXPOSURE = min_edge, exposure
     config.MAX_CAPITAL_PER_RUN, config.RESERVE, config.PER_RACE_CAP = capital, reserve, race_cap
@@ -76,6 +76,7 @@ def make_runner(fake, min_edge=0.005, exposure=None, capital=50_000, reserve=50_
     config.B_ENABLED = b_enabled
     config.REALTIME_ENABLED = False                 # feed tests attach a fake feed explicitly
     config.D_ENABLED = d_enabled
+    config.A_CAPITAL_CAP = a_cap
     config.C_LIMIT, config.C_SKEW, config.C_SKEW_MAX, config.C_QUOTE_EDGE, config.C_CLIP = 2_000, 0.10, 0.25, 0.02, 500
     config.C_EXTRA_RACES = 5
     config.POSITIONS_REFRESH_S, config.BULK_REFRESH_S = 30, 30
@@ -1012,6 +1013,30 @@ def test_d_ledger_is_hidden_from_the_other_strategies():
     ex = fake.ex_of("Texas Senate", "R")
     fake.held = {ex: (-1_150, 500.0), fake.ex_of("Texas Senate", "D"): (-1_000, 600.0)}
     assert r.positions()[ex]["no"] == 1_000                               # A/B/C see 1,000 pairs, not 1,150
+
+
+def test_a_buys_with_free_cash_while_under_its_cap():
+    fake = FakeClient({"Aaa race": EDGE_01}, balance=1_000 + 600)            # 600 free cash, no holdings
+    r = make_runner(fake, a_cap=50_000)
+    r.poll()
+    buys = [b for _, b in r.sent if b["legs"][0]["action"] == "buy"]
+    assert buys and buys[0]["legs"][0]["quantity"] * sum(l["price"] for l in buys[0]["legs"]) <= 600 + 1e-6
+
+
+def test_a_buys_nothing_new_while_over_its_cap():
+    fake = FakeClient({"Held race": SELLER_0990, "Aaa race": EDGE_01}, balance=1_000 + 5_000)
+    fake.held = {fake.ex_of("Held race", "D"): (-60_000, 30_000.0), fake.ex_of("Held race", "R"): (-60_000, 29_400.0)}
+    r = make_runner(fake, a_cap=50_000)                                       # 59,400 at cost > 50,000
+    assert r.cash_room() < 0
+    r.poll()
+    assert r.sent == []                       # no entry (over the cap) and no swap (the held pairs bid 0.99 = no gain)
+
+
+def test_a_room_is_the_smaller_of_cash_and_cap():
+    fake = FakeClient({"Held race": SELLER_0990}, balance=1_000 + 20_000)
+    fake.held = {fake.ex_of("Held race", "D"): (-40_000, 20_000.0), fake.ex_of("Held race", "R"): (-40_000, 19_600.0)}
+    r = make_runner(fake, a_cap=50_000)                                       # holdings 39,600 -> room 10,400 < cash 20,000
+    assert abs(r.cash_room() - 10_400) < 1
 
 
 def test_arb_trade_allowed_on_b_race_with_unequal_legs():

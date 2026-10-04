@@ -93,6 +93,7 @@ class Runner:
         self._pos, self._pos_t = None, 0.0            # positions cache for the poll (orders re-read fresh)
         self._cash_t = 0.0
         self._no_swap = {}                            # swap attempts that found nothing (see poll)
+        self._a_cost = None                           # A's holdings at cost this poll (A_CAPITAL_CAP)
         self._swaps = []                              # times of recent swap attempts (ROTATE_MAX_PER_MIN)
         if getattr(config, "REALTIME_ENABLED", False):
             self.feed = Feed(SusqClient(), self.tour["id"])    # own client: the token mint is its only call
@@ -116,7 +117,8 @@ class Runner:
             if p["settled"]:
                 continue
             q = p["quantity"]
-            out[p["exchangeId"]] = {"no": max(0.0, -q), "yes": max(0.0, q), "cost": p.get("costBasis") or 0.0}
+            out[p["exchangeId"]] = {"no": max(0.0, -q), "yes": max(0.0, q), "cost": p.get("costBasis") or 0.0,
+                                    "raw_no": max(0.0, -q)}     # before D's ledger is taken out (cost per share)
         if self.d is not None:                    # strategy D's shares belong to D: A, B and C never see them
             for ex, qty in self.d.ledger.items():
                 if ex in out:
@@ -260,6 +262,7 @@ class Runner:
             self._cash = None                     # (orders clear it too)
         q = self.quotes()
         held = self.positions(fresh=False)
+        self._a_cost = None                       # A's holdings at cost, computed once per poll when needed
         if self.b is not None:      # strategies B and C first: their buys are worth more than an arb entry
             self.b.step(q, held)
         if self.d is not None:      # strategy D: Senate-control stat arb (own ledger)
@@ -305,7 +308,7 @@ class Runner:
             if b.cash_blocked:
                 blocked.append(b)
         if blocked:
-            print(f"  out of budget ({max(self.cash_room(), 0):.2f} above reserve) for {len(blocked)} race(s)")
+            print(f"  out of budget (A room {self.cash_room():.2f}) for {len(blocked)} race(s)")
         # 3) a few swaps, highest edge first
         if config.ROTATE_ENABLED:
             done = 0
@@ -342,9 +345,29 @@ class Runner:
             self._cash_t = time.time()
         return self._cash
 
+    def a_holdings_cost(self, held=None):
+        """Capital strategy A's positions tie up: every pair held (both legs, net of D's ledger) at its cost."""
+        held = held if held is not None else self.positions(fresh=False)
+        total = 0.0
+        for b in self.baskets:
+            legs = [held.get(e) for e in b.ex]
+            if None in legs:
+                continue
+            pairs = min(l["no"] for l in legs)
+            if pairs > 0:
+                total += pairs * sum(l["cost"] / max(l.get("raw_no", l["no"]), 1e-9) for l in legs)
+        return total
+
     def cash_room(self):
-        """Core budget: cash above RESERVE (usable for any edge >= MIN_EDGE)."""
-        return self.cached_balance() - config.RESERVE
+        """Core budget for strategy A's new pairs. With A_CAPITAL_CAP (user, 2026-10-04): A's holdings may tie
+        up at most that much capital, so the room is min(cash above HARD_RESERVE, cap - holdings at cost);
+        while A is over the cap it buys nothing new and only swaps. Without it: cash above RESERVE."""
+        cap = getattr(config, "A_CAPITAL_CAP", None)
+        if cap is None:
+            return self.cached_balance() - config.RESERVE
+        if self._a_cost is None:
+            self._a_cost = self.a_holdings_cost()
+        return min(self.cached_balance() - config.HARD_RESERVE, cap - self._a_cost)
 
     def extra_room(self):
         """Extra budget: cash above HARD_RESERVE, usable only for edges >= EXTRA_MIN_EDGE (option B)."""
