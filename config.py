@@ -80,7 +80,7 @@ MAX_ROTATIONS_PER_POLL = 2
 # A race stays active while either leg has shares; it is left only when both legs are 0.
 B_ENABLED = True           # user, 2026-10-04: deploy live on the 4 races
 B_LIVE_SINCE = "2026-10-04T07:34:30+00:00"   # first live B round (dashboard counts B trades from here)
-B_INTERVAL_S = 60          # one B round per minute (quotes expire before the next round)
+B_INTERVAL_S = 20          # one B round per 20 s (realtime); quotes rest MAKER_LIFE_S and are re-posted only on change
 # SUSQ race -> Kalshi market tickers {"event", "D", "R"}, built by tools/build_kalshi_map.py (party-wins
 # settlement checked). B trades every mapped race that holds shares on either leg (user, 2026-10-04).
 B_RACES = _json.loads((_Path(__file__).parent / "kalshi_map.json").read_text(encoding="utf-8"))
@@ -107,4 +107,8 @@ B_MAX_ORDERS_PER_ROUND = 10  # keeps B inside the 30 writes/min account budget i
 
 # Execution
 ORDER_EXPIRY_S = 10          # short expiry on every order = home-made IOC (API has no IOC flag)
+REALTIME_ENABLED = True    # realtime feed (realtime_feed.py); False = pure REST polling as before
+POLL_MIN_S = 1.0           # with the feed: polls wake on pushed changes, at most one per this many seconds
+BULK_REFRESH_S = 30        # with the feed: REST bulk quotes only this often (for exchanges without a pushed book)
+POSITIONS_REFRESH_S = 30   # with the feed: poll-level positions/cash re-read this often or after our own fills
 POLL_INTERVAL_S = 5          # one poll = 3 bulk price reads + 1 positions read

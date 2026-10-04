@@ -2,6 +2,7 @@
 Run: python tests/test_execute_dry.py"""
 import os
 import sys
+import time
 from pathlib import Path
 
 os.environ.setdefault("SUSQ_API_KEY", "dummy")
@@ -73,6 +74,8 @@ def make_runner(fake, min_edge=0.005, exposure=None, capital=50_000, reserve=50_
     config.EXTRA_CAPITAL_ENABLED, config.EXTRA_MIN_EDGE, config.HARD_RESERVE = extra, 0.015, 1_000
     config.ROTATE_MAX_SPEND = 2_000
     config.B_ENABLED = b_enabled
+    config.REALTIME_ENABLED = False                 # feed tests attach a fake feed explicitly
+    config.POSITIONS_REFRESH_S, config.BULK_REFRESH_S = 30, 30
     config.MAKER_ENABLED = maker
     config.MAKER_RACES, config.MAKER_MIN_PAIRS, config.MAKER_CLIP = 6, 500, 500
     config.MAKER_LIFE_S, config.MAKER_MAX_ORDERS, config.ROTATE_MIN_GAIN = 300, 8, 0.001
@@ -718,6 +721,142 @@ def test_maker_compares_with_other_races_not_its_own_pair():
     fake, r = _maker_runner(37_588, DEAR_OTHER)
     r.b.step(r.quotes(), r.positions())
     assert not [o for o in _b_orders(r) if o["action"] == "sell"]
+
+
+# ---- realtime feed -------------------------------------------------------------
+def _batch(rev, prev, books=(), trades=(), resync=False):
+    b = {"delivery": {"revision": rev, "previousRevision": prev}, "trades": list(trades), "bookDirty": [],
+         "marketSettled": [], "books": list(books)}
+    if resync:
+        b["resyncRequired"] = True
+    return b
+
+
+def _bk(ex, seq, bids, asks, next_in=60):
+    import datetime as dt
+    nxt = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=next_in)).isoformat()
+    return {"exchangeId": int(ex), "asOf": {"sequence": seq, "at": "2026-10-04T09:00:00.0+00:00"}, "nextExpiryAt": nxt,
+            "bids": [{"price": p, "quantity": q} for p, q in bids], "asks": [{"price": p, "quantity": q} for p, q in asks]}
+
+
+def _feed():
+    from realtime_feed import Feed
+    f = Feed(client=None, tournament_id=TID, log=lambda *a: None)
+    f.healthy = True
+    return f
+
+
+def test_feed_applies_only_newer_books():
+    f = _feed()
+    f.on_market_batch("7", _batch(1, 0, [_bk(1101, 10, [(0.5, 100)], [(0.51, 100)])]))
+    f.on_market_batch("7", _batch(2, 1, [_bk(1101, 9, [(0.4, 100)], [(0.41, 100)])]))     # older version
+    assert f.top("1101") == (0.5, 0.51)
+    f.on_market_batch("7", _batch(3, 2, [_bk(1101, 11, [(0.45, 100)], [(0.46, 100)])]))
+    assert f.top("1101") == (0.45, 0.46)
+
+
+def test_feed_gap_or_resync_drops_the_market():
+    f = _feed()
+    f.on_market_batch("7", _batch(1, 0, [_bk(1101, 10, [(0.5, 100)], [(0.51, 100)])]))
+    f.on_market_batch("7", _batch(5, 3))                                                  # missed 2..3
+    assert f.top("1101") is None
+    f.on_market_batch("8", _batch(1, 0, [_bk(1102, 10, [(0.5, 1)], [(0.51, 1)])]))
+    f.on_market_batch("8", _batch(2, 1, resync=True))
+    assert f.top("1102") is None
+
+
+def test_feed_fresh_only_before_next_expiry():
+    f = _feed()
+    f.on_market_batch("7", _batch(1, 0, [_bk(1101, 10, [(0.5, 100)], [(0.51, 100)], next_in=-1)]))
+    assert f.book("1101") is not None and f.book("1101", fresh=True) is None
+
+
+def test_feed_unhealthy_returns_nothing():
+    f = _feed()
+    f.on_market_batch("7", _batch(1, 0, [_bk(1101, 10, [(0.5, 100)], [(0.51, 100)])]))
+    f.healthy = False
+    assert f.book("1101") is None
+
+
+def test_quotes_from_feed_without_our_own_ask():
+    # pushed book: YES bids 0.875 (ours, 500) then 0.87 (others); we must see others' best 0.87
+    fake = FakeClient({"Delaware Senate": DE}, balance=1_000)
+    r = make_runner(fake)
+    f = _feed(); r.feed = f; r._bulk_t = 1e18
+    ex = fake.ex_of("Delaware Senate", "D")
+    f.on_market_batch("7", _batch(1, 0, [_bk(ex, 10, [(0.875, 500), (0.87, 900)], [(0.88, 300)])]))
+    r.quote_live[(ex, "sell")] = (0.125, 500, 1e18, "maker")                              # our NO ask = YES bid 0.875
+    assert r.quotes()[ex]["bestBid"] == 0.87
+
+
+def test_reconcile_keeps_an_unchanged_quote_and_reprices_a_changed_one():
+    fake, r = _b_runner(37_588, 37_588, balance=1_000)
+    b = basket(r, "Delaware Senate"); ex = fake.ex_of("Delaware Senate", "D")
+    o = {"leg": "D", "side": "sell", "kind": "quote", "price": 0.125, "qty": 1000, "edge_vs_fair": 0.1}
+    r.quote_live[(ex, "sell")] = (0.125, 1000, time.time() + 300, "quote")
+    r.b.reconcile({(ex, "sell"): (b, o)}, {ex}); assert _b_orders(r) == []               # unchanged: no write
+    r.b.reconcile({(ex, "sell"): (b, {**o, "price": 0.13})}, {ex})
+    assert [x["price"] for x in _b_orders(r)] == [0.13]
+
+
+def test_reconcile_never_posts_a_sell_below_others_best_ask():
+    fake, r = _b_runner(37_588, 37_588, balance=1_000)
+    b = basket(r, "Delaware Senate"); ex = fake.ex_of("Delaware Senate", "D")
+    o = {"leg": "D", "side": "sell", "kind": "quote", "price": 0.115, "qty": 1000, "edge_vs_fair": 0.1}   # best NO ask 0.125
+    r.b.reconcile({(ex, "sell"): (b, o)}, {ex})
+    assert _b_orders(r) == []
+
+
+def test_take_never_sells_shares_promised_to_a_resting_quote():
+    # 1,000 NO_D held, 800 already offered by our resting quote: a take may sell at most 200
+    fake, r = _b_runner(1_000, 1_000, balance=1_000)               # no exposure yet
+    config.B_TOTAL_CAP_FRAC = 1.0                                    # plenty of room: a take would sell all 1,000
+    ex = fake.ex_of("Delaware Senate", "D")
+    r.quote_live[(ex, "sell")] = (0.13, 800, time.time() + 300, "quote")
+    r.b.step(r.quotes(), r.positions())
+    takes = [o for o in _b_orders(r) if o["exchangeId"] == ex and o["action"] == "sell" and o["idempotencyKey"].endswith("b-take")]
+    assert sum(o["quantity"] for o in takes) <= 200
+
+
+def test_quote_in_a_race_we_left_is_cancelled():
+    fake, r = _b_runner(0, 0, balance=1_000)                       # both legs 0: race left
+    ex = fake.ex_of("Delaware Senate", "D")
+    r.quote_live[(ex, "sell")] = (0.125, 500, time.time() + 300, "maker")
+    r.b.step(r.quotes(), r.positions())
+    assert (ex, "sell") not in r.quote_live                        # cancelled (dry run clears the state)
+
+
+def test_resting_buys_reduce_the_cash_for_new_buys():
+    fake, r = _b_runner(37_588, 37_588, balance=1_000 + 500)
+    other = fake.ex_of("Delaware Senate", "R")
+    r.quote_live[("9999", "buy")] = (0.5, 1_000, time.time() + 300, "maker")   # 500 already bid elsewhere
+    r.b.step(r.quotes(), r.positions())
+    assert not [o for o in _b_orders(r) if o["action"] == "buy"]
+
+
+def test_maker_stops_where_legs_drift_apart_in_a_race_b_does_not_manage():
+    fake, r = _maker_runner(37_588, CHEAP_OTHER)                   # Kalshi untrusted
+    ex_d, ex_r = fake.ex_of("Delaware Senate", "D"), fake.ex_of("Delaware Senate", "R")
+    fake.held = {ex_d: (-37_088, 3_000.0), ex_r: (-37_588, 3_000.0)}   # one-leg fills: 500 apart already
+    r.b.step(r.quotes(), r.positions())
+    assert not [o for o in _b_orders(r) if o["idempotencyKey"].endswith("b-maker")]
+
+
+def test_feed_rest_book_is_fresh_only_briefly():
+    import realtime_feed
+    f = _feed()
+    f.put_rest_book("1101", {"asOf": {"sequence": 5, "at": "2026-10-04T09:00:00Z"}, "marketId": "7",
+                             "bids": [{"price": 0.5, "quantity": 10}], "asks": [{"price": 0.51, "quantity": 10}]})
+    assert f.book("1101", fresh=True) is not None
+    with f.lock:
+        f.books["1101"]["next"] = time.time() - 1                 # REST_FRESH_S later
+    assert f.book("1101", fresh=True) is None and f.book("1101") is not None
+
+
+def test_b_unexpected_error_skips_the_round_without_raising():
+    fake, r = _b_runner(37_588, 37_588, balance=1_000)
+    r.b._step = lambda q, held: 1 / 0
+    r.b.step(r.quotes(), r.positions())                        # must not raise
 
 
 def test_arb_trade_allowed_on_b_race_with_unequal_legs():

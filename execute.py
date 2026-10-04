@@ -42,6 +42,7 @@ import config
 from arb_math import (ceil_to_tick, fill_price, floor_to_tick, no_asks_from_yes_bids, no_bids_from_yes_asks,
                       walk_baskets, walk_exit, widen_limits)
 from b_executor import BExecutor
+from realtime_feed import Feed
 from baskets import list_markets, two_party_baskets
 from susq_client import ApiError, SusqClient
 
@@ -80,12 +81,30 @@ class Runner:
         print(f"tournament {self.tour['slug']}  run_id {self.run_id}  mode {'LIVE' if live else 'DRY RUN'}")
         print(f"{len(self.baskets)} two-party races; skipped: " + "; ".join(f"{r} ({why})" for r, why in skipped))
         self.b_resting = set()     # exchanges with a resting strategy-B / pair-maker quote
-        self.maker_live = {}       # (exchangeId, side) -> (price, expiry epoch) of resting pair-maker quotes
+        self.quote_live = {}       # (exchangeId, side) -> (price, qty, expiry epoch, owner) of our resting quotes
         self.b = BExecutor(self) if config.B_ENABLED else None
+        # realtime feed (2026-10-04): pushed books + our account events; REST stays the fallback
+        self.feed = None
+        self._bulk, self._bulk_t = {}, 0.0            # last REST bulk quotes and when they were read
+        self._pos, self._pos_t = None, 0.0            # positions cache for the poll (orders re-read fresh)
+        self._cash_t = 0.0
+        self._no_swap = {}                            # swap attempts that found nothing (see poll)
+        if getattr(config, "REALTIME_ENABLED", False):
+            self.feed = Feed(SusqClient(), self.tour["id"])    # own client: the token mint is its only call
+            self.feed.start()
 
     # ---- reads -----------------------------------------------------------
-    def positions(self):
-        """exchangeId -> {"no": NO shares, "yes": YES shares, "cost": cost basis}."""
+    def feed_live(self):
+        return self.feed is not None and self.feed.healthy
+
+    def positions(self, fresh=True):
+        """exchangeId -> {"no": NO shares, "yes": YES shares, "cost": cost basis}.
+        fresh=False (the poll): reuse the last read unless the feed reported our own fills/orders or it
+        is older than POSITIONS_REFRESH_S. Order paths always read fresh."""
+        if not fresh and self.feed_live() and self._pos is not None and not self.feed.positions_dirty.is_set()                 and time.time() - self._pos_t < config.POSITIONS_REFRESH_S:
+            return self._pos
+        if self.feed is not None:
+            self.feed.positions_dirty.clear()
         pos = self.c.get(f"/tournaments/{self.tour['slug']}/portfolio/positions")["positions"]
         out = {}
         for p in pos:
@@ -93,14 +112,64 @@ class Runner:
                 continue
             q = p["quantity"]
             out[p["exchangeId"]] = {"no": max(0.0, -q), "yes": max(0.0, q), "cost": p.get("costBasis") or 0.0}
+        self._pos, self._pos_t = out, time.time()
         return out
 
     def balance(self):
         return self.c.get(f"/tournaments/{self.tour['slug']}")["myBalance"]
 
     def quotes(self):
-        """exchangeId -> best YES bid/ask, via the bulk endpoint (100 exchanges per read)."""
+        """exchangeId -> best YES bid/ask. With the feed live: from its pushed books, falling back to
+        the last REST bulk read for exchanges it holds no book for; the bulk read is refreshed every
+        BULK_REFRESH_S. Without the feed: the bulk endpoint every poll (100 exchanges per read)."""
         ids = [e for b in self.baskets for e in b.ex]
+        if self.feed_live():
+            if time.time() - self._bulk_t > config.BULK_REFRESH_S:
+                self._bulk, self._bulk_t = self.bulk_quotes(ids), time.time()
+            out = {}
+            for e in ids:
+                fb = self.feed.book(e)
+                if fb is None:
+                    out[e] = self._bulk.get(e, {})
+                    continue
+                bids, asks = self.minus_own(e, fb["bids"], fb["asks"])
+                out[e] = {"exchangeId": e, "bestBid": bids[0][0] if bids else None, "bestAsk": asks[0][0] if asks else None}
+            return out
+        return self.bulk_quotes(ids)
+
+    def minus_own(self, e, bids, asks):
+        """YES ladders [(px, qty)] of exchange e without our own resting quotes, so the bot never treats
+        itself as the market (joins its own lone ask, or reads its own pair quotes as an arb)."""
+        def sub(levels, px, qty):
+            out = []
+            for p, q in levels:
+                if abs(p - px) < 1e-9:
+                    q -= qty
+                if q > 1e-9:
+                    out.append((p, q))
+            return out
+        for (ex, side), (price, qty, _, _) in self.quote_live.items():
+            if ex == e and side == "sell":          # our NO ask at a = a YES bid at 1 - a
+                bids = sub(bids, round(1 - price, 6), qty)
+            elif ex == e and side == "buy":         # our NO bid at b = a YES ask at 1 - b
+                asks = sub(asks, round(1 - price, 6), qty)
+        return bids, asks
+
+    def levels(self, e, fresh=True):
+        """Full YES ladders of exchange e without our own quotes: the feed's book if live (and, with
+        fresh=True, before any of its resting orders could expire), else REST (merged into the feed)."""
+        fb = self.feed.book(e, fresh=fresh) if self.feed_live() else None
+        if fb is not None:
+            bids, asks = fb["bids"], fb["asks"]
+        else:
+            book = self.c.get(f"/exchanges/{e}/orderbook", tournamentId=self.tour["id"], depth=200)
+            if self.feed is not None:
+                self.feed.put_rest_book(e, book)
+            bids = [(l["price"], l["quantity"]) for l in book["bids"]]
+            asks = [(l["price"], l["quantity"]) for l in book["asks"]]
+        return self.minus_own(e, bids, asks)
+
+    def bulk_quotes(self, ids):
         out = {}
         for i in range(0, len(ids), 100):
             r = self.c.get("/exchanges/prices", ids=",".join(ids[i:i + 100]), tournamentId=self.tour["id"])
@@ -122,23 +191,27 @@ class Runner:
             print(f"  DRY RUN, would send {path}: {json.dumps(body)}")
             return None
         self.touched.update(l["exchangeId"] for l in body.get("legs", [body]))
+        self._pos_t = 0.0                       # our own order: the next poll re-reads positions
         return self.c.post(path, body)
 
     def cancel_all(self, exchange_ids):
+        for ex in exchange_ids:                 # cancel-all removes our quotes there too (state also in dry runs)
+            for key in [k for k in self.quote_live if k[0] == ex]:
+                del self.quote_live[key]
         if not self.live:
             return
         for ex in exchange_ids:
-            for key in [k for k in self.maker_live if k[0] == ex]:   # cancel-all removes maker quotes too
-                del self.maker_live[key]
             r = self.c.post("/orders/cancel-all", {"exchangeId": ex, "tournamentId": self.tour["id"]})
             if r.get("cancelled"):
                 print(f"  cancelled {r['cancelled']} resting order(s) on exchange {ex}")
 
     # ---- one poll --------------------------------------------------------
     def poll(self):
-        self._cash = None
+        if not self.feed_live() or (self.feed.positions_dirty.is_set()
+                                    or time.time() - self._cash_t > config.POSITIONS_REFRESH_S):
+            self._cash = None                     # (orders clear it too)
         q = self.quotes()
-        held = self.positions()
+        held = self.positions(fresh=False)
         if self.b is not None:      # strategy B first: its buys are worth more than an arb entry
             self.b.step(q, held)
         entries, exits = [], []
@@ -191,8 +264,15 @@ class Runner:
                     return
                 edge = self.top_edge(q, b)
                 if edge is not None and edge >= config.ROTATE_ENTRY_EDGE - 1e-9:
+                    # with ~1 poll/s: do not retry a swap that found nothing until its race's quotes or
+                    # our holdings change, or 30 s pass (saves the book reads)
+                    key = (b.name, tuple((q.get(e, {}).get("bestBid"), q.get(e, {}).get("bestAsk")) for e in b.ex),
+                           self._pos_t)
+                    if self._no_swap.get(key, 0) > time.time() - 30:
+                        continue
                     if self.rotate(b, q, held):
                         done += 1
+                        self._no_swap[key] = time.time()   # cleared by any change in the key
 
     @staticmethod
     def top_edge(q, b):
@@ -201,9 +281,11 @@ class Runner:
         return None if None in bids else 1.0 - sum(1 - x for x in bids)
 
     def cached_balance(self):
-        """Account cash. One balance read per poll; any order clears the cache."""
+        """Account cash. One balance read per poll (feed live: per POSITIONS_REFRESH_S or after our own
+        fills); any order clears the cache."""
         if self._cash is None:
             self._cash = self.balance()
+            self._cash_t = time.time()
         return self._cash
 
     def cash_room(self):
@@ -327,8 +409,9 @@ class Basket:
         """Per leg: NO asks (to buy) and NO bids (to sell), best first."""
         out = []
         for e in self.ex:
-            book = self.r.c.get(f"/exchanges/{e}/orderbook", tournamentId=self.r.tour["id"], depth=200)
-            out.append({"asks": no_asks_from_yes_bids(book["bids"]), "bids": no_bids_from_yes_asks(book["asks"])})
+            bids, asks = self.r.levels(e, fresh=True)   # fresh pushed book or REST, without our own quotes
+            out.append({"asks": no_asks_from_yes_bids([{"price": p, "quantity": q} for p, q in bids]),
+                        "bids": no_bids_from_yes_asks([{"price": p, "quantity": q} for p, q in asks])})
         return out
 
     def holdings(self):
@@ -577,7 +660,12 @@ def main():
             if args.max_runtime and time.time() - started > args.max_runtime:
                 print(f"max runtime {args.max_runtime:g}s reached")
                 break
-            time.sleep(config.POLL_INTERVAL_S)
+            if runner.feed_live():
+                runner.feed.changed.wait(timeout=config.POLL_INTERVAL_S)   # wake on pushed changes
+                runner.feed.changed.clear()
+                time.sleep(config.POLL_MIN_S)                              # but at most ~1 poll / s
+            else:
+                time.sleep(config.POLL_INTERVAL_S)
     except KeyboardInterrupt:
         print("Ctrl-C")
     except Halt as h:

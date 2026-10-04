@@ -53,6 +53,8 @@ class BExecutor:
             self._step(q, held)
         except ApiError as e:
             print(f"  B: API error, round skipped: {e}")
+        except Exception as e:                       # noqa: BLE001 - B must never stop the arb bot
+            print(f"  B: unexpected error, round skipped: {type(e).__name__}: {e}")
 
     @staticmethod
     def top_book(q, ex):
@@ -63,10 +65,13 @@ class BExecutor:
                 "bids": [(round(1 - ask_y, 6), INF)] if ask_y is not None else []}
 
     def full_book(self, ex):
-        ob = self.r.c.get(f"/exchanges/{ex}/orderbook", tournamentId=self.r.tour["id"], depth=200)
-        return {"asks": no_asks_from_yes_bids(ob["bids"]), "bids": no_bids_from_yes_asks(ob["asks"])}
+        """NO ladders of a leg: fresh pushed book or REST, without our own resting quotes."""
+        bids, asks = self.r.levels(ex, fresh=True)
+        return {"asks": no_asks_from_yes_bids([{"price": p, "quantity": q} for p, q in bids]),
+                "bids": no_bids_from_yes_asks([{"price": p, "quantity": q} for p, q in asks])}
 
     def _step(self, q, held):
+        held = self.r.positions(fresh=True)        # B sizes sells from holdings: never from a cached read
         cash = self.r.cached_balance()
         cap_total = config.B_TOTAL_CAP_FRAC * (cash + sum(p["cost"] for p in held.values()))
         state = []
@@ -91,7 +96,12 @@ class BExecutor:
                 used += max(h["R" if fav == "D" else "D"] - h[fav], 0.0)
             state.append((b, ex, h, k, jump))
         room = max(0.0, cap_total - used)
-        spend = max(0.0, cash - config.HARD_RESERVE)              # cash B may use for buys this round
+        # resting buy quotes already claim cash (the engine only checks each exchange on its own)
+        live_buys = sum(px * qty for (e, side), (px, qty, _, _) in self.r.quote_live.items() if side == "buy")
+        spend = max(0.0, cash - config.HARD_RESERVE - live_buys)  # cash B may use for new buys this round
+        # shares already promised to resting sell quotes, and sold by takes this round, per exchange
+        promised = {e: qty for (e, side), (px, qty, _, _) in self.r.quote_live.items() if side == "sell"}
+        sold_now = {}
         # 1) candidate orders per race (race cap applied inside decide; total cap allocated below)
         cands = []
         for b, ex, h, k, jump in state:
@@ -129,11 +139,10 @@ class BExecutor:
                 if res.get("mode") == "closing" and o["side"] == "sell":
                     raises = False                                # unwinding never needs cap room
                 cands.append((edge, o["kind"] == "take", b, ex[o["leg"]], o, raises))
-        # 2) hand out the total cap and the cash: takes first, each group by largest edge
-        sent = 0
+        # 2) hand out the total cap and the cash: takes first, each group by largest edge.
+        #    Takes are sent now; quotes are collected and reconciled with what is already resting.
+        sent, want = 0, {}
         for edge, _, b, exchange, o, raises in sorted(cands, key=lambda c: (not c[1], -c[0])):
-            if sent >= config.B_MAX_ORDERS_PER_ROUND:
-                break
             qty = o["qty"]
             if raises:
                 qty = min(qty, math.floor(room + 1e-9))
@@ -145,21 +154,45 @@ class BExecutor:
                 room -= qty
             if o["side"] == "buy":
                 spend -= qty * o["price"]
-            self.send(b, exchange, o, qty)
-            sent += 1
+            if o["side"] == "sell":                # never sell more than held (an oversell turns into YES)
+                have = held.get(exchange, {}).get("no", 0.0) - sold_now.get(exchange, 0.0)
+                if o["kind"] == "take":
+                    have -= promised.get(exchange, 0.0)
+                qty = min(qty, math.floor(have + 1e-9))
+                if qty < 1:
+                    continue
+            if o["kind"] == "take":
+                if sent < config.B_MAX_ORDERS_PER_ROUND:
+                    self.send(b, exchange, o, qty)
+                    sent += 1
+                    if o["side"] == "sell":
+                        sold_now[exchange] = sold_now.get(exchange, 0.0) + qty
+            elif (exchange, o["side"]) not in want:
+                want[(exchange, o["side"])] = (b, {**o, "qty": qty})
         if config.MAKER_ENABLED:
-            self.make_pairs(q, active, fairs, race_cap, room, spend)
+            for key, (b, o) in self.make_pairs(q, active, fairs, race_cap, room, spend).items():
+                if o["side"] == "sell":
+                    left = held.get(key[0], {}).get("no", 0.0) - sold_now.get(key[0], 0.0)
+                    o = {**o, "qty": min(o["qty"], math.floor(left + 1e-9))}
+                    if o["qty"] < 1:
+                        continue
+                want.setdefault(key, (b, o))        # B's own quote on the same leg and side wins
+        # every exchange with a quote of ours, incl. races that were left (both legs 0): stale ones get cancelled
+        self.reconcile(want, {e for b, ex, h in active for e in ex.values()} | {k[0] for k in self.r.quote_live})
 
     def make_pairs(self, q, active, fairs, race_cap, room, spend):
-        """Pair maker on the largest held races: keep resting pair quotes at the touch (pair_maker.py)."""
-        # NO ask sum of every race: the pair a swap could rotate the proceeds into
+        """Pair maker on the largest held races (pair_maker.py): the pair quotes wanted this round,
+        {(exchangeId, side): (basket, order)}. Posting is left to reconcile()."""
+        # NO ask sum of every race (without our own quotes): the pair a swap could rotate the cash into
         pair_ask = {b.name: sum(1 - q[e]["bestBid"] for e in b.ex) for b in self.r.baskets
                     if all(q.get(e, {}).get("bestBid") is not None for e in b.ex)}
         big = sorted(((b, ex, h, k) for (b, ex, h), k in zip(active, fairs) if min(h.values()) >= config.MAKER_MIN_PAIRS),
                      key=lambda t: -min(t[2].values()))[:config.MAKER_RACES]
-        writes, now = 0, time.time()
+        want = {}
         for b, ex, h, k in big:
-            fav, rroom = None, INF
+            # race B does not manage (Kalshi untrusted / no clear favourite): legs may drift apart by at most
+            # MAKER_OVER_CAP through one-leg fills, then the maker stops quoting it
+            fav, rroom = "either", max(0.0, config.MAKER_OVER_CAP - abs(h["D"] - h["R"]))
             if k["ok"] and max(k["p"].values()) >= config.B_MIN_FAVOURITE:
                 fav = max(k["p"], key=k["p"].get)
                 und = "R" if fav == "D" else "D"
@@ -171,26 +204,42 @@ class BExecutor:
                 rroom = max(0.0, min(limit - exposure, max(room, 0.0) + config.MAKER_OVER_CAP))
             books = {x: self.top_book(q, ex[x]) for x in "DR"}
             cheapest = min((v for n, v in pair_ask.items() if n != b.name), default=None)   # another race
-            want = {(ex[o["leg"]], o["side"]): o for o in pair_maker.pair_quotes(books, h, cheapest, spend, fav, rroom)}
-            for key, o in want.items():
+            for o in pair_maker.pair_quotes(books, h, cheapest, spend, fav, rroom):
                 if o["side"] == "buy":
                     spend -= o["qty"] * o["price"]
-            # drop resting quotes that are no longer wanted at exactly this price (stale or off the touch)
-            for e in set(ex.values()):
-                live = {k2: v for k2, v in self.r.maker_live.items() if k2[0] == e}
-                stale = [k2 for k2, (px, exp) in live.items()
-                         if k2 not in want or abs(want[k2]["price"] - px) > 1e-9 or exp < now + 5]
-                if stale and writes < config.MAKER_MAX_ORDERS:
-                    self.r.cancel_all([e])
-                    writes += 1
-            for key, o in want.items():
-                if key in self.r.maker_live or writes >= config.MAKER_MAX_ORDERS:
-                    continue                                       # already resting at this price
-                self.send(b, key[0], {**o, "kind": "maker", "edge_vs_fair": 0.0}, o["qty"])
+                want[(ex[o["leg"]], o["side"])] = (b, {**o, "kind": "maker", "edge_vs_fair": 0.0})
+        return want
+
+    def reconcile(self, want, exchanges):
+        """Keep resting quotes that are still wanted at the same price and about the same size; cancel the
+        rest (cancel-all per exchange) and post what is missing, after checking against the current book
+        (without our own orders) that a sell is not below the best NO ask and a buy does not cross it."""
+        now, writes = time.time(), 0
+        budget = config.B_MAX_ORDERS_PER_ROUND + config.MAKER_MAX_ORDERS
+        for e in exchanges:
+            live = {k: v for k, v in self.r.quote_live.items() if k[0] == e}
+            stale = [k for k, (px, qty, exp, _) in live.items()
+                     if k not in want or abs(want[k][1]["price"] - px) > 1e-9 or exp < now + 5
+                     or not 0.8 * qty <= want[k][1]["qty"] <= 1.25 * qty]
+            if stale and writes < budget:
+                self.r.cancel_all([e])              # clears quote_live for e
+                self.r.b_resting.discard(e)
                 writes += 1
+        for key, (b, o) in want.items():
+            if key in self.r.quote_live or writes >= budget:
+                continue                            # already resting as wanted (or out of writes)
+            bids, asks = self.r.levels(key[0], fresh=True)
+            best_no_ask = round(1 - bids[0][0], 6) if bids else None    # others' best NO ask
+            if best_no_ask is not None and (o["side"] == "sell" and o["price"] < best_no_ask - 1e-9
+                                            or o["side"] == "buy" and o["price"] >= best_no_ask - 1e-9):
+                print(f"  B {b.name}: skip {o['kind']} {o['side']} NO_{o['leg']} @ {o['price']}: "
+                      f"book moved (best NO ask {best_no_ask})")
+                continue
+            self.send(b, key[0], o, o["qty"])
+            writes += 1
 
     def send(self, b, exchange, o, qty):
-        expiry = {"take": config.ORDER_EXPIRY_S, "maker": config.MAKER_LIFE_S}.get(o["kind"], max(5, config.B_INTERVAL_S - 5))
+        expiry = config.ORDER_EXPIRY_S if o["kind"] == "take" else config.MAKER_LIFE_S   # quotes rest; reconcile() keeps them current
         body = {"idempotencyKey": self.r.next_key(f"b-{o['kind']}"), "exchangeId": exchange, "side": "no",
                 "action": o["side"], "quantity": int(qty), "price": o["price"],
                 "expirationDate": now_plus(expiry), "tournamentId": self.r.tour["id"]}
@@ -210,5 +259,5 @@ class BExecutor:
             self.r.cancel_all([exchange])                         # no resting remainder below the best ask
         elif o["kind"] in ("quote", "maker") and d.get("open"):
             self.r.b_resting.add(exchange)                        # the arb cancels these before trading here
-            if o["kind"] == "maker":
-                self.r.maker_live[(exchange, o["side"])] = (o["price"], time.time() + expiry)
+            rest = qty - (d.get("quantityTraded") or 0)
+            self.r.quote_live[(exchange, o["side"])] = (o["price"], rest, time.time() + expiry, o["kind"])

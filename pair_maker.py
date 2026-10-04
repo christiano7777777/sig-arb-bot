@@ -16,8 +16,9 @@ import config
 
 def pair_quotes(books, held, cheapest_new_pair, cash, fav=None, room=math.inf):
     """books: {"D"/"R": {"bids": [(px, qty)..], "asks": [..]}} NO prices, best first (top of book is enough).
-    held: NO shares per leg. fav: Kalshi favourite or None. room: B exposure room (selling NO_fav adds
-    exposure if only that leg fills). Returns a list of orders {"leg", "side", "price", "qty"}."""
+    held: NO shares per leg. fav: Kalshi favourite, "either" (race B does not manage), or None (no limit).
+    room: how far one leg filling alone may move the legs apart (B's risk room for the favourite), applied
+    to asks and bids alike. Returns a list of orders {"leg", "side", "price", "qty"}."""
     out = []
     pairs = math.floor(min(held["D"], held["R"]) + 1e-9)
     asks = {x: books[x]["asks"][0][0] for x in "DR" if books[x]["asks"]}
@@ -34,6 +35,8 @@ def pair_quotes(books, held, cheapest_new_pair, cash, fav=None, room=math.inf):
         s_bid = bids["D"] + bids["R"]
         if s_bid <= 1.0 - config.MIN_EDGE + 1e-9:
             q = min(config.MAKER_CLIP, math.floor(cash / s_bid + 1e-9))
+            if fav is not None:
+                q = min(q, math.floor(room + 1e-9))   # a fill on one leg alone must fit the room too
             if q >= 1:
                 out += [{"leg": x, "side": "buy", "price": bids[x], "qty": q} for x in "DR"]
     return out

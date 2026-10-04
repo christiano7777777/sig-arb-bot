@@ -39,8 +39,8 @@
   .e0 { color: var(--good); } .e1 { color: var(--warn); } .e2 { color: var(--muted); }
   .note { color: var(--muted); font-size: 12px; margin-top: 12px; }
   h2 { font-size: 15px; margin: 20px 0 8px; }
-  :root { --s1: #2a78d6; --s2: #eb6834; --grid: #ececea; }
-  @media (prefers-color-scheme: dark) { :root { --s1: #3987e5; --s2: #d95926; --grid: #2a2a2e; } }
+  :root { --s1: #2a78d6; --s2: #eb6834; --s3: #1a7f4b; --grid: #ececea; }
+  @media (prefers-color-scheme: dark) { :root { --s1: #3987e5; --s2: #d95926; --s3: #4cc38a; --grid: #2a2a2e; } }
   .chartcard { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px 6px; }
   .legend { display: flex; gap: 18px; flex-wrap: wrap; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
   .legend i { display: inline-block; width: 14px; height: 2px; vertical-align: middle; margin-right: 6px; }
@@ -216,7 +216,8 @@ function valueGained(h) {
   const end = hist[hist.length - 1], t0 = new Date(end.t).getTime() - h * 3600e3;
   let start = hist[0];
   for (const p of hist) { if (new Date(p.t).getTime() <= t0) start = p; else break; }
-  return end.settle - start.settle;
+  // with strategy B: value with its leftovers at Kalshi fair when both ends have it (else settlement value)
+  return (end.fair != null && start.fair != null) ? end.fair - start.fair : end.settle - start.settle;
 }
 
 function renderActivity() {
@@ -238,7 +239,8 @@ function renderActivity() {
 const HIST = SRC.replace("snapshot.json", "history.json");
 let hist = [], initial = 100000;
 const SERIES = [
-  { key: "settle", name: "Value at settlement (every pair pays 1)", color: "var(--s1)" },
+  { key: "settle", name: "Value at settlement (pairs pay 1; B leftovers at cost)", color: "var(--s1)" },
+  { key: "fair", name: "Value with B leftovers at Kalshi fair", color: "var(--s3)" },
   { key: "mtm", name: "Mark-to-market (current prices)", color: "var(--s2)" },
 ];
 
@@ -275,7 +277,7 @@ function drawChart() {
     return;
   }
   const ts = pts.map(p => new Date(p.t).getTime());
-  const vals = pts.flatMap(p => [p.settle, p.mtm]).filter(v => v != null).concat([initial]);
+  const vals = pts.flatMap(p => [p.settle, p.mtm, p.fair]).filter(v => v != null).concat([initial]);
   let lo = Math.min(...vals), hi = Math.max(...vals);
   const pad = (hi - lo) * 0.08 || 50; lo -= pad; hi += pad;
   const t0 = ts[0], t1 = ts[ts.length - 1];
