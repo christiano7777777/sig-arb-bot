@@ -14,6 +14,11 @@ if git clone -q --depth 1 -b dashboard-data "$remote" "$work/prev" 2>/dev/null; 
     cp "$work/prev/history.json" "$work/history.json" 2>/dev/null || true
     cp "$work/prev/order_tags.json" "$work/order_tags.json" 2>/dev/null || true   # orderId -> strategy (no prices)
 fi
+# tags fixed by hand (orders whose tag was lost at a restart)
+python -c "import json,sys; t={};
+try: t=json.load(open(sys.argv[1]))
+except Exception: pass
+t.update(json.load(open('tools/manual_tags.json'))); json.dump(t,open(sys.argv[1],'w'),separators=(',',':'))" "$work/order_tags.json" 2>> snapshot.err || true
 # one-off: points recorded while D's shares were missing from value at settlement get D added back
 python tools/fix_history_d.py "$work/order_tags.json" "$work/history.json" 2>> snapshot.err || true
 # fill in the curve before the first live point by replaying the trade history since the Cup began

@@ -977,6 +977,7 @@ def _d_runner(ledger=None, kalshi_r=0.375):
     stat_model.calibrate = lambda p, target: 0.4
     stat_model.deltas = lambda p, rho: [0.15]
     d_executor.urllib.request.urlopen = lambda *a, **k: (_ for _ in ()).throw(OSError("offline"))   # no tags
+    d_executor.MANUAL_TAGS = d_executor.Path("no-such-file.json")                                 # no hand-fixed tags
     fake = FakeClient({"U.S. Senate": SEN, "Texas Senate": TX}, balance=1_000 + 5_000)
     r = make_runner(fake, d_enabled=True)
     if ledger:

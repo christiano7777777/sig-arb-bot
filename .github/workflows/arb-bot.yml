@@ -48,6 +48,12 @@ jobs:
           kill $SNAP 2>/dev/null
           exit 0
 
+      - name: Save this run's order tags (also when cancelled)
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash tools/final_tags.sh
+
       - name: Halted -> disable this workflow
         if: steps.bot.outputs.code == '3'
         env:

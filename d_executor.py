@@ -9,6 +9,7 @@ against D's hedges. The ledger is updated from every D order's fill and rebuilt 
 order tags (order_tags.json on the dashboard-data branch) plus our fills since D_LIVE_SINCE.
 """
 import json
+from pathlib import Path
 import time
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
@@ -20,6 +21,8 @@ import strategy_d
 from susq_client import ApiError
 
 TAGS_URL = "https://raw.githubusercontent.com/christiano7777777/sig-arb-bot/dashboard-data/order_tags.json"
+TAGS_API = "https://api.github.com/repos/christiano7777777/sig-arb-bot/contents/order_tags.json?ref=dashboard-data"
+MANUAL_TAGS = Path(__file__).parent / "tools" / "manual_tags.json"
 
 
 def now_plus(seconds):
@@ -59,10 +62,18 @@ class DExecutor:
     # ---------------- ledger ----------------
     def rebuild(self):
         """D's holdings = sum of D-tagged fills since D_LIVE_SINCE (buys +, sells -)."""
-        try:
-            tags = json.load(urllib.request.urlopen(TAGS_URL, timeout=10))
-        except Exception:                               # noqa: BLE001 - no tags yet: nothing to rebuild
-            tags = {}
+        tags = {}
+        for url in (TAGS_API, TAGS_URL):               # the API is never stale; raw.githubusercontent caches ~5 min
+            try:
+                req = urllib.request.Request(url, headers={"Accept": "application/vnd.github.raw"})
+                tags = json.load(urllib.request.urlopen(req, timeout=10))
+                break
+            except Exception:                           # noqa: BLE001 - no tags yet: nothing to rebuild
+                continue
+        try:                                            # tags fixed by hand (orders whose tag was lost)
+            tags.update(json.load(open(MANUAL_TAGS, encoding="utf-8")))
+        except (OSError, ValueError):
+            pass
         try:
             for line in open(self.r.state_dir / "order_tags.jsonl", encoding="utf-8"):
                 t = json.loads(line)
