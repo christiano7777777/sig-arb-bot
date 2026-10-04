@@ -92,6 +92,8 @@ class SusqClient:
         try:
             err = resp.json()["error"]
             code, msg = err.get("code"), err.get("message")
+            if err.get("details"):                 # e.g. which leg failed validation and why
+                msg = f"{msg} details={json.dumps(err['details'])[:600]}"
         except (ValueError, KeyError, TypeError):
             code, msg = "HTTP", resp.text[:300]
         e = ApiError(resp.status_code, code, msg)

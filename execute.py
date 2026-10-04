@@ -343,7 +343,7 @@ class Runner:
                 continue
             pairs = min(held.get(e, {}).get("no", 0.0) for e in a.ex)
             asks = [q.get(e, {}).get("bestAsk") for e in a.ex]
-            if pairs >= 1 and None not in asks:
+            if pairs >= 1 and None not in asks and not a.paused():
                 s = sum(1 - x for x in asks)
                 if s >= floor - 1e-9:
                     out.append((s, a))
@@ -433,6 +433,7 @@ class Basket:
         self.r, self.name, self.legs = runner, name, legs
         self.ex = [l["exchange_id"] for l in legs]
         self.cash_blocked = False   # set by plan(): out of cash above the reserve
+        self.paused_until = 0.0     # after a rejected pair order: leave this race alone until then
         # strategy B race: may hold unequal legs on purpose; arb trades keep that imbalance unchanged
         self.b_race = config.B_ENABLED and name in config.B_RACES
 
@@ -563,9 +564,14 @@ class Basket:
               f"expected cost {res['avg_cost']:.4f}/pair, locked >= {q - q * res['avg_cost']:.3f}")
         self.send_pair("buy", q, limits, held)
 
+    def paused(self):
+        return time.time() < self.paused_until
+
     def send_pair(self, action, q, limits, before, exit_target=None):
         """One atomic multi-leg order on both legs, then cancel leftovers and check what filled.
         exit_target: the pair price a sell aimed for (break-even for repairing a one-sided sell)."""
+        if self.paused():
+            return 0
         base = before[0] - before[1]                 # imbalance to keep (0 except on strategy B races)
         if abs(base) > 1e-9 and not self.b_race:
             raise Halt(f"{self.name}: legs already unequal before trading: {before}")
@@ -580,6 +586,13 @@ class Basket:
             r = self.r.order("/orders/multi-leg", body, f"{self.name}:pair-{action}")
             self.r._cash = None
         except ApiError as err:
+            if 400 <= err.status < 500 and err.status not in (408, 429):
+                # rejected before execution (multi-leg is all-or-nothing; 4xx is not retried): nothing
+                # traded. Skip this race for a minute instead of halting (2026-10-04 live halt: 400
+                # VALIDATION_ERROR on a pair sell whose holdings were sufficient).
+                print(f"    REJECTED, nothing traded: {err}. {self.name} paused {config.REJECT_PAUSE_S} s")
+                self.paused_until = time.time() + config.REJECT_PAUSE_S
+                return 0
             # outcome unknown even after the documented retries: stop, cancel, let the human look
             raise Halt(f"{self.name}: pair {action} failed: {err}. Check positions by hand.")
         if r is None:          # dry run stops here (counted as a full fill)

@@ -870,6 +870,30 @@ def test_b_unexpected_error_skips_the_round_without_raising():
     r.b.step(r.quotes(), r.positions())                        # must not raise
 
 
+def test_rejected_pair_order_pauses_the_race_instead_of_halting():
+    fake = FakeClient({"Kansas Senate": NO_EDGE})
+    r = make_runner(fake)
+    b = basket(r, "Kansas Senate")
+    def reject(path, body, label):
+        raise execute.ApiError(400, "VALIDATION_ERROR", "Validation failed for one or more legs.")
+    r.order = reject
+    assert b.send_pair("sell", 10, [0.5, 0.49], [100, 100]) == 0      # no Halt, nothing traded
+    assert b.paused() and b.send_pair("sell", 10, [0.5, 0.49], [100, 100]) == 0
+
+
+def test_unknown_outcome_still_halts():
+    fake = FakeClient({"Kansas Senate": NO_EDGE})
+    r = make_runner(fake)
+    b = basket(r, "Kansas Senate")
+    def boom(path, body, label):
+        raise execute.ApiError(503, "SERVICE_UNAVAILABLE", "x")
+    r.order = boom
+    try:
+        b.send_pair("sell", 10, [0.5, 0.49], [100, 100]); assert False, "expected Halt"
+    except execute.Halt:
+        pass
+
+
 def test_arb_trade_allowed_on_b_race_with_unequal_legs():
     fake, r = _b_runner(37_588, 32_588, balance=1_000)
     b = basket(r, "Delaware Senate")
