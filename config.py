@@ -33,6 +33,9 @@ TRADE_AT_ZERO_EDGE = False  # scan.py only
 # The arb strategy may use only the cash above RESERVE (initial 100,000 -> 50,000 for this strategy).
 # The budget is read from the live balance before every entry, so exits automatically free it again.
 RESERVE = 50_000             # (legacy, used only when A_CAPITAL_CAP is None) core budget = cash above this
+CASH_SPLIT = {"D": 0.5, "C": 0.3, "B": 0.2}   # user, 2026-10-04: free cash (above HARD_RESERVE) for new buys goes
+                             # to the other strategies; D's missing hedges are funded first. A gets no fresh cash
+                             # (it still swaps, and every swap releases cash to the others)
 A_CAPITAL_CAP = 50_000       # user, 2026-10-04: strategy A's pairs may tie up at most this much capital (at cost);
                              # while over it A buys nothing new (swaps only); below it A may use free cash
 # Option B (user, 2026-10-04): the other 50k is used too, but only for book levels with edge >= EXTRA_MIN_EDGE,

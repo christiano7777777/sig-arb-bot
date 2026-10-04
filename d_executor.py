@@ -127,10 +127,16 @@ class DExecutor:
         ctrl_book = {l["party"]: top(l["exchange_id"]) for l in self.ctrl.legs}
         hedge_books = {r: {l["party"]: top(l["exchange_id"]) for l in b.legs} for r, b in self.hedge.items()}
         deltas = {r: d for r, d in dl.items() if r in self.hedge}
-        cash = self.r.cached_balance() - config.HARD_RESERVE
-        cash -= sum(px * qty for (e, side), (px, qty, _, _) in self.r.quote_live.items() if side == "buy")
+        # cash: D's CASH_SPLIT share (capped by D_CAPITAL); its missing hedges may draw on all free cash
+        led = self.view()
+        held_ctrl = max(led.get(("ctrl", "D"), 0), led.get(("ctrl", "R"), 0))
+        hleg = "R" if led.get(("ctrl", "D"), 0) >= led.get(("ctrl", "R"), 0) else "D"
+        deficit = sum(max(0.0, held_ctrl * d - led.get((r, hleg), 0)) * (hedge_books[r][hleg]["ask"] or 1.0)
+                      for r, d in deltas.items() if r in hedge_books)
+        live_buys = sum(px * qty for (e, side), (px, qty, _, _) in self.r.quote_live.items() if side == "buy")
+        free = max(0.0, self.r.free_cash() - live_buys)
         committed = sum(self.ledger.values()) * 0.5                 # rough cost of what D holds (cap check)
-        budget = max(0.0, min(cash, config.D_CAPITAL - committed))
+        budget = min(max(min(self.r.strategy_budget("D"), config.D_CAPITAL - committed), deficit), free)
         res = strategy_d.plan(k_r, ctrl_book, deltas, hedge_books, self.view(), budget)
         self.last = {"rho": rho, "k_r": k_r, "gap": res["gap"], "direction": res["direction"], "deltas": dl,
                      "target_n": res["target_n"], "hedge_targets": res["hedge_targets"]}

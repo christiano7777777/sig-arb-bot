@@ -345,6 +345,21 @@ class Runner:
             self._cash_t = time.time()
         return self._cash
 
+    def free_cash(self):
+        """Cash above the hard reserve (resting buy orders are not deducted by the platform)."""
+        return self.cached_balance() - config.HARD_RESERVE
+
+    def strategy_budget(self, s):
+        """Cash strategy s ('B', 'C', 'D') may use for new buys: its CASH_SPLIT share of the free cash, less
+        what its own resting buy quotes already claim (C quotes = 'quote', pair maker = 'maker')."""
+        split = getattr(config, "CASH_SPLIT", None)
+        if not split:                             # no split: all free cash, less every resting buy
+            return max(0.0, self.free_cash() - sum(px * qty for (e, side), (px, qty, _, _) in self.quote_live.items()
+                                                   if side == "buy"))
+        owner = {"B": "maker", "C": "quote"}.get(s)
+        own = sum(px * qty for (e, side), (px, qty, _, o) in self.quote_live.items() if side == "buy" and o == owner)
+        return max(0.0, split.get(s, 0.0) * max(self.free_cash(), 0.0) - own)
+
     def a_holdings_cost(self, held=None):
         """Capital strategy A's positions tie up: every pair held (both legs, net of D's ledger) at its cost."""
         held = held if held is not None else self.positions(fresh=False)
@@ -367,7 +382,8 @@ class Runner:
             return self.cached_balance() - config.RESERVE
         if self._a_cost is None:
             self._a_cost = self.a_holdings_cost()
-        return min(self.cached_balance() - config.HARD_RESERVE, cap - self._a_cost)
+        a_share = 1.0 - sum((getattr(config, "CASH_SPLIT", None) or {}).values())   # what the others leave
+        return min(self.free_cash() * a_share, cap - self._a_cost)
 
     def extra_room(self):
         """Extra budget: cash above HARD_RESERVE, usable only for edges >= EXTRA_MIN_EDGE (option B)."""

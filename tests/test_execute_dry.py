@@ -65,7 +65,8 @@ class FakeClient:
 
 
 def make_runner(fake, min_edge=0.005, exposure=None, capital=50_000, reserve=50_000, race_cap=5_000,
-                denylist=(), extra=False, b_enabled=False, maker=False, d_enabled=False, a_cap=None):
+                denylist=(), extra=False, b_enabled=False, maker=False, d_enabled=False, a_cap=None,
+                cash_split=None):
     # pin every setting the tests rely on, so editing config.py cannot silently change a test
     config.MIN_EDGE, config.MAX_UNHEDGED_EXPOSURE = min_edge, exposure
     config.MAX_CAPITAL_PER_RUN, config.RESERVE, config.PER_RACE_CAP = capital, reserve, race_cap
@@ -77,6 +78,7 @@ def make_runner(fake, min_edge=0.005, exposure=None, capital=50_000, reserve=50_
     config.REALTIME_ENABLED = False                 # feed tests attach a fake feed explicitly
     config.D_ENABLED = d_enabled
     config.A_CAPITAL_CAP = a_cap
+    config.CASH_SPLIT = cash_split
     config.C_LIMIT, config.C_SKEW, config.C_SKEW_MAX, config.C_QUOTE_EDGE, config.C_CLIP = 2_000, 0.10, 0.25, 0.02, 500
     config.C_EXTRA_RACES = 5
     config.POSITIONS_REFRESH_S, config.BULK_REFRESH_S = 30, 30
@@ -1037,6 +1039,22 @@ def test_a_room_is_the_smaller_of_cash_and_cap():
     fake.held = {fake.ex_of("Held race", "D"): (-40_000, 20_000.0), fake.ex_of("Held race", "R"): (-40_000, 19_600.0)}
     r = make_runner(fake, a_cap=50_000)                                       # holdings 39,600 -> room 10,400 < cash 20,000
     assert abs(r.cash_room() - 10_400) < 1
+
+
+def test_cash_split_between_strategies():
+    fake = FakeClient({"Kansas Senate": NO_EDGE}, balance=1_000 + 10_000)
+    r = make_runner(fake, cash_split={"D": 0.5, "C": 0.3, "B": 0.2})
+    assert (r.strategy_budget("D"), r.strategy_budget("C"), r.strategy_budget("B")) == (5_000, 3_000, 2_000)
+    r.quote_live[("x", "buy")] = (0.5, 1_000, time.time() + 300, "quote")             # C already bids 500
+    assert r.strategy_budget("C") == 2_500 and r.strategy_budget("B") == 2_000
+
+
+def test_a_gets_no_fresh_cash_when_split_among_others():
+    fake = FakeClient({"Aaa race": EDGE_01}, balance=1_000 + 600)
+    r = make_runner(fake, a_cap=50_000, cash_split={"D": 0.5, "C": 0.3, "B": 0.2})
+    assert r.cash_room() == 0
+    r.poll()
+    assert r.sent == []
 
 
 def test_arb_trade_allowed_on_b_race_with_unequal_legs():

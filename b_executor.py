@@ -78,9 +78,9 @@ class BExecutor:
         held = self.r.positions(fresh=True)        # sizes sells from holdings: never from a cached read
         cash = self.r.cached_balance()
         cap_total = config.B_TOTAL_CAP_FRAC * (cash + sum(p["cost"] for p in held.values()))
-        # resting buy quotes already claim cash (the engine only checks each exchange on its own)
-        live_buys = sum(px * qty for (e, side), (px, qty, _, _) in self.r.quote_live.items() if side == "buy")
-        spend = max(0.0, cash - config.HARD_RESERVE - live_buys)
+        # cash: each strategy its CASH_SPLIT share, less what its own resting buys already claim
+        spend = self.r.strategy_budget("C")
+        spend_b = self.r.strategy_budget("B")
         legs = {b.name: {b.legs[i]["party"]: b.ex[i] for i in (0, 1)} for b in self.races}
         hold = {b.name: {x: held.get(legs[b.name][x], {}).get("no", 0.0) for x in "DR"} for b in self.races}
         active = [(b, legs[b.name], hold[b.name]) for b in self.races
@@ -134,7 +134,7 @@ class BExecutor:
                 want[(ex[o["leg"]], o["side"])] = (b, {**o, "qty": qty, "kind": "quote"})
         if config.MAKER_ENABLED:
             for key, (b, o) in self.make_pairs(q, active, fairs, {b.name: config.C_LIMIT for b, _, _ in active},
-                                               room, spend).items():
+                                               room, spend_b).items():
                 if o["side"] == "sell":
                     left = held.get(key[0], {}).get("no", 0.0)
                     o = {**o, "qty": min(o["qty"], math.floor(left + 1e-9))}
