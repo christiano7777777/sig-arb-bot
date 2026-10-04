@@ -21,3 +21,5 @@ jobs:
         run: python -c "import tests.test_arb_math as t; n=[x for x in dir(t) if x.startswith('test_')]; [getattr(t, x)() for x in n]; print(len(n), 'passed')"
       - name: Executor tests against a fake API (no network, no orders)
         run: python tests/test_execute_dry.py
+      - name: Strategy B decisions
+        run: python tests/test_strategy_b.py

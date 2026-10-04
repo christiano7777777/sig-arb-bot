@@ -55,7 +55,12 @@ EXIT_MIN_SUM = 1.000
 # sell held pairs to fund it, cheapest-to-exit first (highest NO-bid sum S), only if
 #   S - (ask sum of the new pair) >= ROTATE_MIN_GAIN      (net gain per pair swapped)
 # Swaps may sell below the held pair's cost (user, 2026-10-04); plain exits never do.
+# Buy first, then sell (2026-10-04): selling first left pairs sold below 1 with no buy when the new
+# race's book moved (6% of swapped pairs on 2026-10-03/04). The buy is paid from cash above
+# HARD_RESERVE, at most ROTATE_MAX_SPEND per swap, and sized to what the sellers' books can absorb;
+# the sale then refills the cash. If the sale falls short, the extra pairs are kept (bought at an edge).
 ROTATE_ENABLED = True
+ROTATE_MAX_SPEND = 2_000
 ROTATE_ENTRY_EDGE = MIN_EDGE  # user, 2026-10-04: swap whenever the swap itself earns > 0
 ROTATE_MIN_GAIN = 0.001   # user, 2026-10-04 (on the 0.005 tick this equals any gain > 0)
 ROTATE_TRIGGER_CASH = 50     # "out of budget" = less than this above the reserve
@@ -64,6 +69,23 @@ ROTATE_TRIGGER_CASH = 50     # "out of budget" = less than this above the reserv
 # swaps, so the next exit check is never more than a few seconds away.
 MAX_ENTRIES_PER_POLL = 4
 MAX_ROTATIONS_PER_POLL = 2
+
+# --- Strategy B: Kalshi-anchored trading on held races (user, 2026-10-04) ---
+# Fair value of each leg from Kalshi's mid (overround removed). Sell the leg that is rich on SUSQ,
+# buy the leg that is cheap, within caps. Quotes never make the pair worse for others: our NO ask
+# only at/above the leg's best NO ask; our NO bid + the other leg's best NO bid < 1.
+# A race stays active while either leg has shares; it is left only when both legs are 0.
+B_ENABLED = True           # user, 2026-10-04: deploy live on the 4 races
+B_INTERVAL_S = 60          # one B round per minute (quotes expire before the next round)
+B_RACES = {"Minnesota Governor": "GOVPARTYMN-26", "North Carolina Senate": "SENATENC-26",
+           "New Mexico Senate": "SENATENM-26", "Delaware Senate": "SENATEDE-26"}   # SUSQ race -> Kalshi event
+B_MIN_FAVOURITE = 0.95     # trade a race only if Kalshi gives the favourite >= this
+B_TAKE_EDGE = 0.05         # take liquidity when SUSQ price is >= this far from fair (to be set from data)
+B_QUOTE_EDGE = 0.02        # rest quotes at least this far from fair (to be set from data)
+B_MAX_KALSHI_SPREAD = 0.02 # Kalshi bid-ask wider than this -> fair value not trusted, no trading
+B_KALSHI_JUMP = 0.02       # Kalshi mid moved more than this since the last read -> pull quotes
+B_RACE_CAP = 5_000         # max shares at risk per race (pay 0 if the underdog wins)
+B_TOTAL_CAP_FRAC = 0.10    # max shares at risk over all races, as a fraction of portfolio value
 
 # Execution
 ORDER_EXPIRY_S = 10          # short expiry on every order = home-made IOC (API has no IOC flag)

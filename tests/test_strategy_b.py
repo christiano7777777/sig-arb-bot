@@ -1,0 +1,127 @@
+"""Offline tests of strategy_b.decide (pure function, no network).
+Run: python tests/test_strategy_b.py"""
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import config  # noqa: E402
+import strategy_b  # noqa: E402
+
+# Delaware-like race at 06:55 UTC 2026-10-04: SUSQ NO_D 0.12/0.125, NO_R 0.84/0.845; Kalshi p_D 0.986
+BOOKS = {"D": {"bids": [(0.12, 3000), (0.115, 5000)], "asks": [(0.125, 2000)]},
+         "R": {"bids": [(0.84, 4000)], "asks": [(0.845, 6000), (0.85, 9000)]}}
+P = {"D": 0.986, "R": 0.014}
+
+
+def pin():
+    config.B_MIN_FAVOURITE, config.B_TAKE_EDGE, config.B_QUOTE_EDGE = 0.95, 0.05, 0.02
+    config.B_RACE_CAP, config.TICK = 5_000, 0.005
+
+
+def orders(res, **match):
+    return [o for o in res["orders"] if all(o[k] == v for k, v in match.items())]
+
+
+def test_race_left_when_both_legs_zero():
+    pin()
+    r = strategy_b.decide(BOOKS, P, {"D": 0, "R": 0}, room_total=1e9)
+    assert not r["active"] and r["orders"] == []
+
+
+def test_race_stays_active_with_one_leg_left():
+    pin()
+    r = strategy_b.decide(BOOKS, P, {"D": 0, "R": 300}, room_total=1e9)
+    assert r["active"]
+
+
+def test_no_trading_when_kalshi_not_trusted():
+    pin()
+    r = strategy_b.decide(BOOKS, P, {"D": 10_000, "R": 10_000}, room_total=1e9, kalshi_ok=False)
+    assert r["orders"] == []
+
+
+def test_no_trading_below_favourite_threshold():
+    pin()
+    r = strategy_b.decide(BOOKS, {"D": 0.9, "R": 0.1}, {"D": 10_000, "R": 10_000}, room_total=1e9)
+    assert r["orders"] == []
+
+
+def test_sells_rich_leg_and_respects_race_cap():
+    pin()
+    r = strategy_b.decide(BOOKS, P, {"D": 37_588, "R": 37_588}, room_total=1e9, cash=0)
+    sells = orders(r, leg="D", side="sell", kind="take")
+    assert sells and sells[0]["qty"] == 5_000                       # 8,000 bid >= 0.064, capped at 5k
+    raising = sum(o["qty"] for o in r["orders"] if (o["leg"], o["side"]) in (("D", "sell"), ("R", "buy")))
+    assert raising <= 5_000                                         # all exposure-raising orders share the cap
+
+
+def test_total_cap_binds_before_race_cap():
+    pin()
+    r = strategy_b.decide(BOOKS, P, {"D": 37_588, "R": 37_588}, room_total=1_200)
+    raising = sum(o["qty"] for o in r["orders"] if (o["leg"], o["side"]) in (("D", "sell"), ("R", "buy")))
+    assert raising <= 1_200
+
+
+def test_existing_exposure_uses_up_room():
+    pin()
+    r = strategy_b.decide(BOOKS, P, {"D": 0, "R": 5_000}, room_total=1e9)   # already 5k at risk
+    assert not [o for o in r["orders"] if (o["leg"], o["side"]) in (("D", "sell"), ("R", "buy"))]
+
+
+def test_ask_never_undercuts_best_ask():
+    pin()
+    r = strategy_b.decide(BOOKS, P, {"D": 1_000, "R": 1_000}, room_total=1e9)
+    for o in orders(r, side="sell", kind="quote"):
+        assert o["price"] >= BOOKS[o["leg"]]["asks"][0][0] - 1e-9
+
+
+def test_bid_never_lets_anyone_sell_us_a_pair_at_or_above_one():
+    pin()
+    r = strategy_b.decide(BOOKS, P, {"D": 1_000, "R": 1_000}, room_total=1e9)
+    for o in orders(r, side="buy", kind="quote"):
+        other = "R" if o["leg"] == "D" else "D"
+        assert o["price"] + BOOKS[other]["bids"][0][0] < 1 - 1e-9
+        assert o["price"] < BOOKS[o["leg"]]["asks"][0][0] - 1e-9            # never crosses the ask
+
+
+def test_no_quotes_after_kalshi_jump():
+    pin()
+    r = strategy_b.decide(BOOKS, P, {"D": 1_000, "R": 1_000}, room_total=1e9, kalshi_jump=True)
+    assert not orders(r, kind="quote")
+
+
+def test_cap_goes_to_the_bigger_edge_first_within_a_race():
+    # buying NO_R (0.845 vs fair 0.986, edge 0.141) beats selling NO_D (0.12 vs 0.014, edge 0.106)
+    pin()
+    r = strategy_b.decide(BOOKS, P, {"D": 37_588, "R": 37_588}, room_total=1e9, cash=10_000)
+    first_raising = [o for o in r["orders"] if (o["leg"], o["side"]) in (("D", "sell"), ("R", "buy"))][0]
+    assert (first_raising["leg"], first_raising["side"]) == ("R", "buy")
+
+
+def test_buys_limited_by_cash():
+    pin()
+    r = strategy_b.decide(BOOKS, P, {"D": 37_588, "R": 37_588}, room_total=1e9, cash=500)
+    assert sum(o["qty"] * o["price"] for o in r["orders"] if o["side"] == "buy") <= 500 + 1e-9
+
+
+def test_null_case_fair_prices_no_takes():
+    # SUSQ priced at Kalshi fair: nothing is far enough from fair to take
+    pin()
+    books = {"D": {"bids": [(0.010, 5000)], "asks": [(0.020, 5000)]},
+             "R": {"bids": [(0.980, 5000)], "asks": [(0.990, 5000)]}}
+    r = strategy_b.decide(books, P, {"D": 1_000, "R": 1_000}, room_total=1e9)
+    assert not orders(r, kind="take")
+
+
+if __name__ == "__main__":
+    names = [n for n in dir() if n.startswith("test_")]
+    bad = 0
+    for n in names:
+        try:
+            globals()[n]()
+            print("PASS", n)
+        except Exception as e:
+            bad += 1
+            print("FAIL", n, repr(e))
+    print(f"{len(names) - bad}/{len(names)} passed")
+    sys.exit(1 if bad else 0)

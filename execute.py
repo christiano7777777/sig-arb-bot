@@ -13,8 +13,9 @@ Each poll:
      entry (NO asks sum <= 1 - MIN_EDGE) get their full books read; exits first, then entries
      from the largest edge down
   3. rotation: if cash above the reserve is used up and a race shows an edge >= ROTATE_ENTRY_EDGE,
-     sell held pairs (highest NO-bid sum first) when sell sum - new ask sum >= ROTATE_MIN_GAIN,
-     never below their cost, then buy the new pair at a price that keeps that gain
+     swap held pairs (highest NO-bid sum first) into it when sell sum - new ask sum >= ROTATE_MIN_GAIN:
+     buy the new pair FIRST (cash above HARD_RESERVE, sized to what the sellers can absorb), then
+     sell only as many held pairs as were bought, at a price that keeps that gain
 Each attempt (per race):
   a. walk both books, apply caps (cash above reserve, optional per-race cap, unhedged exposure)
   b. ONE atomic multi-leg order on both legs (marketable limits, short expiry)
@@ -40,6 +41,7 @@ from pathlib import Path
 import config
 from arb_math import (ceil_to_tick, fill_price, floor_to_tick, no_asks_from_yes_bids, no_bids_from_yes_asks,
                       walk_baskets, walk_exit, widen_limits)
+from b_executor import BExecutor
 from baskets import list_markets, two_party_baskets
 from susq_client import ApiError, SusqClient
 
@@ -77,6 +79,8 @@ class Runner:
         self.baskets = [Basket(self, b["name"], b["legs"]) for b in found]
         print(f"tournament {self.tour['slug']}  run_id {self.run_id}  mode {'LIVE' if live else 'DRY RUN'}")
         print(f"{len(self.baskets)} two-party races; skipped: " + "; ".join(f"{r} ({why})" for r, why in skipped))
+        self.b_resting = set()     # exchanges with a resting strategy-B quote
+        self.b = BExecutor(self) if config.B_ENABLED else None
 
     # ---- reads -----------------------------------------------------------
     def positions(self):
@@ -132,6 +136,8 @@ class Runner:
         self._cash = None
         q = self.quotes()
         held = self.positions()
+        if self.b is not None:      # strategy B first: its buys are worth more than an arb entry
+            self.b.step(q, held)
         entries, exits = [], []
         for b in self.baskets:
             edge = self.top_edge(q, b)
@@ -227,8 +233,12 @@ class Runner:
         return out
 
     def rotate(self, b, q, held):
-        """Fund race b (edge >= ROTATE_ENTRY_EDGE) by selling held pairs whose current NO-bid sum
-        beats b's ask sum by >= ROTATE_MIN_GAIN. Returns True if it did any book reads."""
+        """Swap into race b (edge >= ROTATE_ENTRY_EDGE) out of held pairs whose current NO-bid sum
+        beats b's ask sum by >= ROTATE_MIN_GAIN. Order (user, 2026-10-04):
+          - enough cash above HARD_RESERVE for the whole swap -> buy first, then sell only what was
+            bought (a failed buy changes nothing; a short sale leaves extra pairs bought at an edge)
+          - otherwise -> sell first, then buy with what the sale freed, at a price that keeps the gain
+        Returns True if it did any book reads."""
         # pre-check from the bulk quotes: the cheapest new pair is 1 - top edge, so no held race
         # bidding below that + ROTATE_MIN_GAIN can ever fund it. Then no book is read at all.
         c_top = 1.0 - self.top_edge(q, b)
@@ -239,42 +249,62 @@ class Runner:
         # buy levels priced <= best_S - ROTATE_MIN_GAIN (walking deeper would price out every seller)
         best_s = max(s for s, _ in possible)
         edge_needed = max(config.ROTATE_ENTRY_EDGE, 1.0 - (best_s - config.ROTATE_MIN_GAIN))
-        p = b.plan(b.books(), min_edge=edge_needed, ignore_cash=True)
+        p = b.plan(b.books(), min_edge=edge_needed, budget=float("inf"))
         if p is None:
             return True
-        qn, _, res_n, _ = p
-        # price of a new pair at the book levels it would take (before limit slack is added)
-        new_sum = sum(ceil_to_tick(x, config.TICK) for x in res_n["worst_prices"])
-        sell_floor = new_sum + config.ROTATE_MIN_GAIN             # held pairs must sell at >= this
-        need = qn * res_n["avg_cost"] - max(0.0, self.cash_room())
-        if need < 1:
-            return True
-        cands = self.sellers(q, held, b, sell_floor)
-        if not cands:
-            print(f"  ROTATE {b.name} (new pair <= {new_sum:.3f}): needs ~{need:.0f}, "
-                  f"no held race bids >= {sell_floor:.3f}")
-            return True
-        print(f"  ROTATE {b.name} (new pair <= {new_sum:.3f}): needs ~{need:.0f}; "
-              f"sellers {[f'{a.name} {s:.3f}' for s, a in cands]}")
-        sold_min = None
-        for _, a in sorted(cands, key=lambda t: -t[0]):           # cheapest to give up first
-            if need < 1 or STOP_FILE.exists():
+        qn, lim_n, _, held_b = p
+        # worst case paid per new pair = the limit sum (slack included), so held pairs must sell at
+        # >= that + ROTATE_MIN_GAIN for the swap to keep its gain whatever the buy fills at
+        sell_floor = sum(lim_n) + config.ROTATE_MIN_GAIN
+        # read the sellers' books first and plan the sales, so the swap is no bigger than they absorb
+        sales, left = [], qn
+        for _, a in sorted(self.sellers(q, held, b, sell_floor), key=lambda t: -t[0]):   # cheapest to give up first
+            if left < 1:
                 break
-            ex = a.plan_exit(a.books(), min_sum=sell_floor, max_pairs=math.ceil(need / sell_floor),
-                             allow_below_cost=True)
-            if ex is None:
-                continue
-            qs, lim_s, res_s, held_a = ex
+            ex = a.plan_exit(a.books(), min_sum=sell_floor, max_pairs=left, allow_below_cost=True)
+            if ex is not None:
+                sales.append((a, ex))
+                left -= ex[0]
+        q_swap = qn - left
+        if q_swap < 1:
+            print(f"  ROTATE {b.name}: no held race can sell at >= {sell_floor:.3f}")
+            return True
+        budget = min(config.ROTATE_MAX_SPEND, self.cached_balance() - config.HARD_RESERVE)
+        names = [a.name for a, _ in sales]
+        if budget >= q_swap * sum(lim_n):
+            print(f"  ROTATE {b.name}: BUY FIRST {q_swap} pairs at {lim_n} (<= {sum(lim_n):.3f}/pair), "
+                  f"then sell at >= {sell_floor:.3f} from {names}")
+            left = b.send_pair("buy", q_swap, lim_n, held_b)
+            for a, (qs, lim_s, res_s, held_a) in sales:
+                if left < 1 or STOP_FILE.exists():
+                    break
+                qs = min(qs, math.floor(left + 1e-9))
+                print(f"  ROTATE: sell {qs} pairs of {a.name} at {lim_s} (~{res_s['avg_proceeds']:.4f}/pair) "
+                      f"for {b.name}")
+                left -= a.send_pair("sell", qs, lim_s, held_a)
+            if left >= 1:
+                print(f"  ROTATE {b.name}: {left:g} new pairs not matched by a sale; kept (bought at an edge)")
+            return True
+        print(f"  ROTATE {b.name}: SELL FIRST (cash {max(budget, 0):.0f} < swap ~{q_swap * sum(lim_n):.0f}) "
+              f"{q_swap} pairs at >= {sell_floor:.3f} from {names}, then buy at <= {sum(lim_n):.3f}")
+        sold = 0
+        for a, (qs, lim_s, res_s, held_a) in sales:
+            if STOP_FILE.exists():
+                break
             print(f"  ROTATE: sell {qs} pairs of {a.name} at {lim_s} (~{res_s['avg_proceeds']:.4f}/pair) "
                   f"to fund {b.name}")
-            a.send_pair("sell", qs, lim_s, held_a)
-            need -= qs * res_s["avg_proceeds"]
-            sold_min = sum(lim_s) if sold_min is None else min(sold_min, sum(lim_s))
-        if sold_min is None:
+            sold += a.send_pair("sell", qs, lim_s, held_a)
+        if sold < 1:
             return True
-        # buy only at a price that keeps the swap gain, even if the book moved meanwhile
-        # min_cash=1: spend whatever the sales freed, even if it is under the "out of budget" trigger
-        b.try_once(min_edge=max(config.ROTATE_ENTRY_EDGE, 1.0 - (sold_min - config.ROTATE_MIN_GAIN)), min_cash=1)
+        # buy with what the sale freed, never above the price that keeps the swap gain
+        self._cash = None
+        budget = self.cached_balance() - config.HARD_RESERVE
+        p = b.plan(b.books(), min_edge=max(config.ROTATE_ENTRY_EDGE, 1.0 - sum(lim_n)), budget=budget)
+        if p is None:
+            print(f"  ROTATE {b.name}: sold {sold:g} pairs but the new pair is no longer <= {sum(lim_n):.3f}")
+            return True
+        qb, lim_b, _, held_b = p
+        b.send_pair("buy", min(qb, math.floor(sold + 1e-9)), lim_b, held_b)
         return True
 
 
@@ -285,6 +315,8 @@ class Basket:
         self.r, self.name, self.legs = runner, name, legs
         self.ex = [l["exchange_id"] for l in legs]
         self.cash_blocked = False   # set by plan(): out of cash above the reserve
+        # strategy B race: may hold unequal legs on purpose; arb trades keep that imbalance unchanged
+        self.b_race = config.B_ENABLED and name in config.B_RACES
 
     # ---- reads -----------------------------------------------------------
     def books(self):
@@ -305,11 +337,11 @@ class Basket:
         return self.holdings()[0]
 
     # ---- planning --------------------------------------------------------
-    def plan(self, books, min_edge=None, ignore_cash=False, min_cash=None):
+    def plan(self, books, min_edge=None, min_cash=None, budget=None):
         """Entry: return (q, limits, walk result, NO held) or None.
 
         Sets self.cash_blocked when the cash above the reserve (not the per-race cap) is what stops it.
-        ignore_cash=True sizes the trade as if cash were available (used to size a rotation).
+        budget: spend at most this much and ignore the reserve tiers (used by a swap's buy).
         """
         edge = config.MIN_EDGE if min_edge is None else min_edge
         ladders = [b["asks"] for b in books]
@@ -321,8 +353,8 @@ class Basket:
             return None
         race_room = float("inf") if config.PER_RACE_CAP is None else config.PER_RACE_CAP - race_cost
         trigger = config.ROTATE_TRIGGER_CASH if min_cash is None else min_cash
-        cash = float("inf") if ignore_cash else self.r.cash_room()
-        if cash < trigger and not ignore_cash:
+        cash = budget if budget is not None else self.r.cash_room()
+        if cash < trigger and budget is None:
             # option B: below the 50k reserve, only book levels with edge >= EXTRA_MIN_EDGE may be bought,
             # paid from the extra tier (cash above HARD_RESERVE)
             top = 1.0 - sum(lad[0][0] for lad in ladders)
@@ -415,8 +447,12 @@ class Basket:
     def send_pair(self, action, q, limits, before, exit_target=None):
         """One atomic multi-leg order on both legs, then cancel leftovers and check what filled.
         exit_target: the pair price a sell aimed for (break-even for repairing a one-sided sell)."""
-        if abs(before[0] - before[1]) > 1e-9:
+        base = before[0] - before[1]                 # imbalance to keep (0 except on strategy B races)
+        if abs(base) > 1e-9 and not self.b_race:
             raise Halt(f"{self.name}: legs already unequal before trading: {before}")
+        if self.b_race and self.r.live and self.r.b_resting & set(self.ex):
+            self.r.cancel_all(self.ex)               # our own B quotes must not trade against this order
+            self.r.b_resting -= set(self.ex)
         body = {"idempotencyKey": self.r.next_key(action),
                 "legs": [{"exchangeId": e, "side": "no", "action": action, "quantity": int(q), "price": px,
                           "expirationDate": now_plus(config.ORDER_EXPIRY_S), "tournamentId": self.r.tour["id"]}
@@ -427,8 +463,8 @@ class Basket:
         except ApiError as err:
             # outcome unknown even after the documented retries: stop, cancel, let the human look
             raise Halt(f"{self.name}: pair {action} failed: {err}. Check positions by hand.")
-        if r is None:          # dry run stops here
-            return
+        if r is None:          # dry run stops here (counted as a full fill)
+            return q
         any_open = False
         for leg in r["results"]:
             d = leg["data"]
@@ -441,12 +477,14 @@ class Basket:
         after = self.no_shares()
         moved = [abs(a - b) for a, b in zip(after, before)]
         print(f"    {action} per leg (from positions): {moved}  now holding {after}")
-        if abs(after[0] - after[1]) > 1e-9:
+        if abs((after[0] - after[1]) - base) > 1e-9:
             target = sum(limits) if exit_target is None else exit_target
             try:
-                self.fix_imbalance(after, action, limits, target)
+                self.fix_imbalance(after, action, limits, target, base)
             except ApiError as err:
                 raise Halt(f"{self.name}: error while evening out legs: {err}. Check positions by hand.")
+            after = self.no_shares()
+        return abs(min(after) - min(before))       # pairs actually bought / sold
 
     def leg_order(self, k, action, qty, price, tag):
         body = {"idempotencyKey": self.r.next_key(tag), "exchangeId": self.ex[k], "side": "no",
@@ -457,16 +495,18 @@ class Basket:
         return r
 
     # ---- unequal legs ----------------------------------------------------
-    def fix_imbalance(self, held, action, limits, exit_target):
+    def fix_imbalance(self, held, action, limits, exit_target, base=0.0):
         """Legs are unequal after an order. Even them out NOW at the current book (never leave it):
         the cheaper of buying the missing leg or selling the extra leg, per share, versus what the
-        original order intended. Halts only if the book cannot absorb the fix after FIX_MAX_TRIES."""
+        original order intended. Halts only if the book cannot absorb the fix after FIX_MAX_TRIES.
+        base: the imbalance (leg 0 - leg 1) the race had before the order; restored, not zeroed."""
         for attempt in range(1, config.FIX_MAX_TRIES + 1):
-            e = 0 if held[0] > held[1] else 1           # leg with extra shares
+            d = held[0] - held[1] - base
+            e = 0 if d > 0 else 1                       # leg with extra shares (relative to base)
             m = 1 - e
-            diff = held[e] - held[m]
+            diff = abs(d)
             if diff <= 1e-9:
-                print("    legs equal again")
+                print("    legs back to their intended balance")
                 return
             x = math.ceil(diff - 1e-9)
             books = self.books()

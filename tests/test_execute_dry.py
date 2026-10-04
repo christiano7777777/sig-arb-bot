@@ -64,13 +64,15 @@ class FakeClient:
 
 
 def make_runner(fake, min_edge=0.005, exposure=None, capital=50_000, reserve=50_000, race_cap=5_000,
-                denylist=(), extra=False):
+                denylist=(), extra=False, b_enabled=False):
     # pin every setting the tests rely on, so editing config.py cannot silently change a test
     config.MIN_EDGE, config.MAX_UNHEDGED_EXPOSURE = min_edge, exposure
     config.MAX_CAPITAL_PER_RUN, config.RESERVE, config.PER_RACE_CAP = capital, reserve, race_cap
     config.EXIT_ENABLED, config.EXIT_MIN_SUM, config.TOURNAMENT_SLUG = True, 1.0, SLUG
     config.RACE_DENYLIST = set(denylist)
     config.EXTRA_CAPITAL_ENABLED, config.EXTRA_MIN_EDGE, config.HARD_RESERVE = extra, 0.015, 1_000
+    config.ROTATE_MAX_SPEND = 2_000
+    config.B_ENABLED = b_enabled
     execute.STATE_DIR = Path(__file__).parent / "_state_test"
     execute.STOP_FILE = execute.STATE_DIR / "STOP"
     execute.STOP_FILE.unlink(missing_ok=True)          # a halt in an earlier test must not leak
@@ -303,7 +305,7 @@ def test_rotation_sells_0995_to_fund_edge_01():
     r = make_runner(fake, exposure=500)                                         # avg cost 0.99 / pair
     r.poll()
     assert len(r.sent) == 2
-    (p1, sell), (p2, buy) = r.sent
+    (p1, buy), (p2, sell) = r.sent                                              # buy first, then sell
     assert [x[1] for x in legs_of(sell)] == ["sell", "sell"]
     assert [x[0] for x in legs_of(sell)] == [fake.ex_of("Held race", "D"), fake.ex_of("Held race", "R")]
     assert [x[3] for x in legs_of(sell)] == [0.5, 0.495]
@@ -336,19 +338,20 @@ def test_rotation_big_edge_justifies_selling_below_0995():
     r = make_runner(fake, exposure=500)                                         # avg cost 0.98
     r.poll()
     actions = [b["legs"][0]["action"] for _, b in r.sent]
-    assert actions == ["sell", "buy"]
-    assert sum(x[3] for x in legs_of(r.sent[1][1])) <= 0.985 - 0.005 + 1e-9
+    assert actions == ["buy", "sell"]
+    assert sum(x[3] for x in legs_of(r.sent[0][1])) <= 0.985 - 0.005 + 1e-9
 
 
-def test_rotation_buys_even_when_sale_frees_under_50():
-    # seller only has 20 pairs at 0.995 -> frees ~20 cash (< 50 trigger); the buy must still happen
+def test_swap_buys_only_what_the_sellers_can_absorb():
+    # seller only has 20 pairs bid at 0.995 -> buy 20 new pairs first, then sell those 20
     seller = {"D": ([(0.4, 5)], [(0.5, 20)]), "R": ([(0.4, 5)], [(0.505, 20)])}
     fake = FakeClient({"Held race": seller, "New race": EDGE_01}, balance=50_000.5)
     fake.held = {fake.ex_of("Held race", "D"): (-5000, 2500.0), fake.ex_of("Held race", "R"): (-5000, 2450.0)}
     r = make_runner(fake, exposure=500)
     r.poll()
-    assert [b["legs"][0]["action"] for _, b in r.sent] == ["sell", "buy"]
-    assert r.sent[1][1]["legs"][0]["quantity"] == 20      # (0.5 + 20 * 0.995) / 0.99 -> 20
+    assert [b["legs"][0]["action"] for _, b in r.sent] == ["buy", "sell"]
+    assert r.sent[0][1]["legs"][0]["quantity"] == 20
+    assert r.sent[1][1]["legs"][0]["quantity"] == 20
 
 
 def test_rotation_skips_when_gain_too_small():
@@ -366,7 +369,7 @@ def test_rotation_may_sell_below_cost():
     fake.held = {fake.ex_of("Held race", "D"): (-5000, 2500.0), fake.ex_of("Held race", "R"): (-5000, 2490.0)}
     r = make_runner(fake, exposure=500)
     r.poll()
-    assert [b["legs"][0]["action"] for _, b in r.sent] == ["sell", "buy"]
+    assert [b["legs"][0]["action"] for _, b in r.sent] == ["buy", "sell"]
 
 
 def test_plain_exit_never_below_cost():
@@ -400,10 +403,63 @@ def test_swap_sizes_new_pair_to_what_the_seller_can_fund():
     fake.held = {fake.ex_of("Held race", "D"): (-5000, 2450.0), fake.ex_of("Held race", "R"): (-5000, 2450.0)}
     r = make_runner(fake, exposure=500)
     r.poll()
-    assert [b["legs"][0]["action"] for _, b in r.sent] == ["sell", "buy"]
-    buy = r.sent[1][1]
+    assert [b["legs"][0]["action"] for _, b in r.sent] == ["buy", "sell"]
+    buy = r.sent[0][1]
     assert buy["legs"][0]["quantity"] == 100                      # only the 0.97 level
     assert sum(l["price"] for l in buy["legs"]) <= 0.990 - 0.001 + 1e-9
+
+
+def _swap_setup(balance=50_000.5):
+    fake = FakeClient({"Held race": SELLER_0995, "New race": EDGE_01}, balance=balance)
+    fake.held = {fake.ex_of("Held race", "D"): (-5000, 2500.0), fake.ex_of("Held race", "R"): (-5000, 2450.0)}
+    return fake, make_runner(fake, exposure=500)
+
+
+def _fill_buys_with(r, filled):
+    """Pretend every pair buy fills only `filled` pairs (sales fill in full)."""
+    for b in r.baskets:
+        real = b.send_pair
+        def fake_send(action, q, limits, before, exit_target=None, real=real):
+            got = real(action, q, limits, before, exit_target)
+            return filled if action == "buy" else got
+        b.send_pair = fake_send
+
+
+def test_swap_sells_nothing_when_the_buy_fails():
+    fake, r = _swap_setup()
+    _fill_buys_with(r, 0)
+    r.poll()
+    assert [b["legs"][0]["action"] for _, b in r.sent] == ["buy"]          # no pair sold below 1 for nothing
+
+
+def test_swap_sells_only_what_was_bought():
+    fake, r = _swap_setup()
+    _fill_buys_with(r, 7)
+    r.poll()
+    assert [b["legs"][0]["action"] for _, b in r.sent] == ["buy", "sell"]
+    assert r.sent[1][1]["legs"][0]["quantity"] == 7
+
+
+def test_swap_sells_first_when_cash_cannot_cover_it():
+    # 300 cash above the hard reserve, swap worth ~990 -> sell first, then buy with the proceeds
+    fake, r = _swap_setup(balance=1_000 + 300)
+    r.poll()
+    assert [b["legs"][0]["action"] for _, b in r.sent] == ["sell", "buy"]
+    sell, buy = r.sent[0][1], r.sent[1][1]
+    assert buy["legs"][0]["quantity"] <= sell["legs"][0]["quantity"]               # never buys more than sold
+    assert sum(l["price"] for l in buy["legs"]) <= sum(l["price"] for l in sell["legs"]) - 0.001 + 1e-9
+
+
+def test_swap_sells_first_with_no_cash_at_all():
+    fake, r = _swap_setup(balance=1_000)
+    r.poll()
+    assert [b["legs"][0]["action"] for _, b in r.sent] == ["sell", "buy"]
+
+
+def test_swap_buys_first_when_cash_covers_it():
+    fake, r = _swap_setup(balance=1_000 + 2_000)
+    r.poll()
+    assert [b["legs"][0]["action"] for _, b in r.sent] == ["buy", "sell"]
 
 
 def test_out_of_budget_poll_reads_no_books():
@@ -474,6 +530,109 @@ def test_no_per_race_cap_when_none():
     r.poll()
     # walk 0.50 + 0.48 = 0.98, slack widens limits to 0.51 + 0.485 = 0.995 -> floor(500 / 0.51) = 980
     assert [l["quantity"] for l in r.sent[0][1]["legs"]] == [980, 980]
+
+
+# ---- strategy B executor ------------------------------------------------------
+# Delaware-like books in YES terms: NO_D bid 0.12 / ask 0.125, NO_R bid 0.84 / ask 0.845
+DE = {"D": ([(0.875, 9000)], [(0.88, 9000)]), "R": ([(0.155, 9000)], [(0.16, 9000)])}
+
+
+def _b_runner(held_d, held_r, balance, kalshi_ok=True):
+    import kalshi
+    config.B_RACES = {"Delaware Senate": "SENATEDE-26"}
+    config.B_MIN_FAVOURITE, config.B_TAKE_EDGE, config.B_QUOTE_EDGE = 0.95, 0.05, 0.02
+    config.B_RACE_CAP, config.B_TOTAL_CAP_FRAC, config.B_KALSHI_JUMP = 5_000, 0.10, 0.02
+    kalshi.fair = lambda event, max_spread: (
+        {"ok": True, "why": "", "p": {"D": 0.986, "R": 0.014}, "mid": {"D": 0.986, "R": 0.014}, "spread": {}}
+        if kalshi_ok else {"ok": False, "why": "test"})
+    fake = FakeClient({"Delaware Senate": DE}, balance=balance)
+    fake.held = {fake.ex_of("Delaware Senate", "D"): (-held_d, 0.12 * held_d),
+                 fake.ex_of("Delaware Senate", "R"): (-held_r, 0.84 * held_r)}
+    r = make_runner(fake, exposure=500, b_enabled=True)
+    return fake, r
+
+
+def _b_orders(r):
+    return [b for _, b in r.sent if "legs" not in b]          # B sends single-leg orders
+
+
+def test_b_round_sells_rich_leg_within_cap_and_cash():
+    fake, r = _b_runner(37_588, 37_588, balance=1_000 + 500)
+    r.b.step(r.quotes(), r.positions())
+    orders = _b_orders(r)
+    ex_d, ex_r = fake.ex_of("Delaware Senate", "D"), fake.ex_of("Delaware Senate", "R")
+    sells_d = [o for o in orders if o["exchangeId"] == ex_d and o["action"] == "sell"]
+    assert sells_d and all(o["price"] >= 0.014 + 0.05 - 1e-9 for o in sells_d)       # >= fair + take edge
+    raising = sum(o["quantity"] for o in orders if (o["exchangeId"], o["action"]) in ((ex_d, "sell"), (ex_r, "buy")))
+    assert raising <= 5_000                                                           # race cap
+    assert sum(o["quantity"] * o["price"] for o in orders if o["action"] == "buy") <= 500 + 1e-9   # cash
+
+
+def test_b_quotes_never_undercut_best_ask():
+    fake, r = _b_runner(37_588, 37_588, balance=1_000)
+    r.b.step(r.quotes(), r.positions())
+    for o in _b_orders(r):
+        if o["action"] == "sell" and o["idempotencyKey"].endswith("b-quote"):
+            best_ask = 1 - max(p for p, _ in fake.books[o["exchangeId"]][0])
+            assert o["price"] >= best_ask - 1e-9
+
+
+def test_b_no_orders_when_kalshi_untrusted():
+    fake, r = _b_runner(37_588, 37_588, balance=5_000, kalshi_ok=False)
+    r.b.step(r.quotes(), r.positions())
+    assert _b_orders(r) == []
+
+
+def test_b_no_orders_when_race_flat():
+    fake, r = _b_runner(0, 0, balance=5_000)
+    r.b.step(r.quotes(), r.positions())
+    assert _b_orders(r) == []
+
+
+def test_b_round_runs_once_per_interval():
+    fake, r = _b_runner(37_588, 37_588, balance=1_000)
+    r.b.step(r.quotes(), r.positions())
+    n = len(r.sent)
+    r.b.step(r.quotes(), r.positions())                       # same minute: nothing new
+    assert len(r.sent) == n
+
+
+def test_b_total_cap_goes_to_the_biggest_edge_first():
+    import kalshi
+    # Aaa race: rich leg 0.12 vs fair 0.014 (edge ~0.1); Zzz race: rich leg 0.085 vs fair 0.048 (~0.04)
+    small = {"D": ([(0.91, 9000)], [(0.915, 9000)]), "R": ([(0.12, 9000)], [(0.125, 9000)])}
+    config.B_RACES = {"Zzz race": "Z", "Aaa race": "A"}
+    config.B_MIN_FAVOURITE, config.B_TAKE_EDGE, config.B_QUOTE_EDGE = 0.95, 0.05, 0.02
+    config.B_RACE_CAP, config.B_KALSHI_JUMP = 5_000, 0.02
+    probs = {"A": 0.986, "Z": 0.952}
+    kalshi.fair = lambda e, m: {"ok": True, "why": "", "p": {"D": probs[e], "R": 1 - probs[e]},
+                                "mid": {"D": probs[e], "R": 1 - probs[e]}, "spread": {}}
+    fake = FakeClient({"Zzz race": small, "Aaa race": DE}, balance=1_000)
+    fake.held = {fake.ex_of(n, x): (-20_000, 2_000.0) for n in ("Aaa race", "Zzz race") for x in "DR"}
+    r = make_runner(fake, exposure=500, b_enabled=True)
+    config.B_TOTAL_CAP_FRAC = 3_000 / (1_000 + 8_000)          # total cap 3,000 shares
+    r.b.step(r.quotes(), r.positions())
+    aaa = {fake.ex_of("Aaa race", x) for x in "DR"}
+    first = _b_orders(r)[0]
+    assert first["exchangeId"] in aaa                         # biggest edge served first
+    assert sum(o["quantity"] for o in _b_orders(r) if o["action"] == "sell") <= 3_000
+
+
+def test_arb_trade_allowed_on_b_race_with_unequal_legs():
+    fake, r = _b_runner(37_588, 32_588, balance=1_000)
+    b = basket(r, "Delaware Senate")
+    assert b.send_pair("buy", 10, [0.125, 0.845], [37_588, 32_588]) == 10       # no Halt
+
+
+def test_unequal_legs_still_halt_outside_b_races():
+    fake = FakeClient({"Kansas Senate": NO_EDGE})
+    r = make_runner(fake)
+    b = basket(r, "Kansas Senate")
+    try:
+        b.send_pair("buy", 10, [0.5, 0.49], [100, 50])
+        assert False, "expected Halt"
+    except execute.Halt:
+        pass
 
 
 if __name__ == "__main__":
