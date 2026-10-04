@@ -408,7 +408,9 @@ def strategy_d_block(c, quotes, legs_of, ledger, fills):
             ks = list(pool.map(lambda r: kalshi.market(tick[r]), races))
         k_ctrl = kalshi.market(config.D_KALSHI_CONTROL["R"])
     except Exception as e:                                          # noqa: BLE001
-        return {"error": f"Kalshi: {e}"}
+        # keep D's holdings at cost: without it value at settlement drops by D's whole position for one
+        # snapshot whenever Kalshi hiccups (-9.8k at 16:44, -11.3k at 20:49 on 2026-10-04)
+        return {"error": f"Kalshi: {e}", "holdings_cost": round(sum(d_cost_basis(fills).values()), 2)}
     p = [mid(m) for m in ks]
     k_r = mid(k_ctrl)
     rho = stat_model.calibrate(p, k_r)
