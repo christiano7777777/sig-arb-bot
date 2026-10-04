@@ -132,6 +132,52 @@ def test_holding_mode_while_pairs_remain():
     assert r["mode"] == "holding"
 
 
+# books where NO_D's bid sits 0.061 above fair (0.014): a take with no exposure, none once skewed
+NEAR = {"D": {"bids": [(0.075, 3000)], "asks": [(0.08, 2000)]},
+        "R": {"bids": [(0.91, 4000)], "asks": [(0.915, 6000)]}}
+
+
+def test_skew_needs_more_edge_to_add_risk_as_exposure_grows():
+    pin(); config.B_SKEW = 0.05
+    flat = strategy_b.decide(NEAR, P, {"D": 10_000, "R": 10_000}, room_total=1e9, cash=0, race_cap=5_000)
+    assert orders(flat, leg="D", side="sell", kind="take")                      # 0.061 >= 0.05: take
+    loaded = strategy_b.decide(NEAR, P, {"D": 6_000, "R": 10_000}, room_total=1e9, cash=0, race_cap=5_000)
+    assert not orders(loaded, leg="D", side="sell", kind="take")                # needs 0.05 + 0.04 now
+
+
+CONVERGED = {"D": {"bids": [(0.06, 3000)], "asks": [(0.065, 2000)]},       # SUSQ moved toward Kalshi
+             "R": {"bids": [(0.92, 4000)], "asks": [(0.925, 6000)]}}
+
+
+def test_moderate_skew_brings_a_buyback_quote_to_the_touch_when_exposed():
+    pin(); config.B_SKEW = 0.07                                                 # r_f = 0.014 + 0.07
+    r = strategy_b.decide(CONVERGED, P, {"D": 5_000, "R": 10_000}, room_total=1e9, cash=10_000, race_cap=5_000)
+    buy = orders(r, leg="D", side="buy", kind="quote")
+    assert buy and buy[0]["price"] == 0.06 and buy[0]["qty"] <= 5_000           # joins the best bid
+    assert not orders(r, side="buy", kind="take") and not orders(r, leg="R", side="sell", kind="take")
+
+
+def test_strong_skew_takes_to_cut_risk_but_not_past_zero():
+    pin(); config.B_SKEW = 0.12                                                 # r_f = 0.134, r_u = 0.866
+    r = strategy_b.decide(CONVERGED, P, {"D": 5_000, "R": 10_000}, room_total=1e9, cash=10_000, race_cap=5_000)
+    takes = [o for o in r["orders"] if o["kind"] == "take"]
+    assert {(o["leg"], o["side"]) for o in takes} == {("D", "buy"), ("R", "sell")}
+    assert sum(o["qty"] for o in r["orders"] if (o["leg"], o["side"]) in (("D", "buy"), ("R", "sell"))) <= 5_000
+
+
+def test_risk_reducing_orders_stop_at_zero_exposure():
+    pin(); config.B_SKEW = 0.30
+    r = strategy_b.decide(BOOKS, P, {"D": 8_000, "R": 10_000}, room_total=1e9, cash=1e6, race_cap=5_000)
+    lowering = sum(o["qty"] for o in r["orders"] if (o["leg"], o["side"]) in (("D", "buy"), ("R", "sell")))
+    assert lowering <= 2_000
+
+
+def test_no_skew_without_exposure():
+    pin(); config.B_SKEW = 0.05
+    r = strategy_b.decide(BOOKS, P, {"D": 1_000, "R": 1_000}, room_total=1e9, race_cap=5_000)
+    assert r["reservation"] == {"D": round(1 - 0.986, 4), "R": 0.986}
+
+
 def test_null_case_fair_prices_no_takes():
     # SUSQ priced at Kalshi fair: nothing is far enough from fair to take
     pin()

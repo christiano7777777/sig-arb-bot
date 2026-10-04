@@ -91,38 +91,46 @@ def decide(books, p, held, room_total, kalshi_ok=True, kalshi_jump=False, cash=I
     cap = INF if cap is None else cap
     room = max(0.0, min(cap - max(exposure, 0.0), room_total))
     fair = {x: 1.0 - p[x] for x in "DR"}
+    # skewed quotes while holding (user, 2026-10-04; inventory skew as in Avellaneda-Stoikov 2008):
+    # quote around a reservation price r that moves against our directional exposure. We are long
+    # NO_u / short NO_f by `exposure` shares, so r_f = fair_f + shift (keener to buy NO_f back) and
+    # r_u = fair_u - shift (keener to sell NO_u); shift = B_SKEW x exposure / race cap (capped at 1.5x).
+    u = 0.0 if cap in (0, INF) else max(-1.5, min(1.5, exposure / cap))
+    shift = config.B_SKEW * u
+    r = {fav: fair[fav] + shift, und: fair[und] - shift}
+    out["reservation"] = {x: round(r[x], 4) for x in "DR"}
 
     def raises(leg, side):
         # selling NO_f or buying NO_u raises exposure; the opposite trades lower it
         return (leg == fav and side == "sell") or (leg == und and side == "buy")
 
-    # 1) every candidate order at full size; prio = edge vs fair at the best level we would trade
+    # 1) every candidate order at full size; prio = edge vs the reservation price r at the best level
     cands = []
     for leg in "DR":
         other = "R" if leg == "D" else "D"
         bids, asks = books[leg]["bids"], books[leg]["asks"]
         # take: sell into bids >= fair + TAKE_EDGE (only shares we hold)
-        lv = [(px, qty) for px, qty in bids if px >= fair[leg] + config.B_TAKE_EDGE - 1e-9]
+        lv = [(px, qty) for px, qty in bids if px >= r[leg] + config.B_TAKE_EDGE - 1e-9]
         if lv and held[leg] >= 1:
             cands.append({"leg": leg, "side": "sell", "kind": "take", "price": min(px for px, _ in lv),
-                          "qty": min(sum(q for _, q in lv), held[leg]), "prio": lv[0][0] - fair[leg]})
+                          "qty": min(sum(q for _, q in lv), held[leg]), "prio": lv[0][0] - r[leg]})
         # take: buy asks <= fair - TAKE_EDGE
-        lv = [(px, qty) for px, qty in asks if px <= fair[leg] - config.B_TAKE_EDGE + 1e-9]
+        lv = [(px, qty) for px, qty in asks if px <= r[leg] - config.B_TAKE_EDGE + 1e-9]
         if lv:
             qty = sum(q for _, q in lv) if raises(leg, "buy") else min(sum(q for _, q in lv), max(held[other] - held[leg], 0))
             cands.append({"leg": leg, "side": "buy", "kind": "take", "price": max(px for px, _ in lv),
-                          "qty": qty, "prio": fair[leg] - lv[0][0]})
+                          "qty": qty, "prio": r[leg] - lv[0][0]})
         if kalshi_jump:
             continue                                   # fair value just moved: no resting quotes
         # quote: ask at/above the best ask (never undercut), and >= fair + QUOTE_EDGE
         if held[leg] >= 1 and asks:
-            a = max(asks[0][0], up(fair[leg] + config.B_QUOTE_EDGE))
+            a = max(asks[0][0], up(r[leg] + config.B_QUOTE_EDGE))
             if a < 1:
                 cands.append({"leg": leg, "side": "sell", "kind": "quote", "price": a, "qty": held[leg],
-                              "prio": a - fair[leg]})
+                              "prio": a - r[leg]})
         # quote: bid <= fair - QUOTE_EDGE, below the best ask, and our bid + other leg's best bid < 1
         if bids or asks:
-            b = down(fair[leg] - config.B_QUOTE_EDGE)
+            b = down(r[leg] - config.B_QUOTE_EDGE)
             if asks:
                 b = min(b, round(asks[0][0] - TICK, 6))
             if books[other]["bids"]:
@@ -130,11 +138,12 @@ def decide(books, p, held, room_total, kalshi_ok=True, kalshi_jump=False, cash=I
             qty = INF if raises(leg, "buy") else max(held[other] - held[leg], 0)
             if b > 0 and qty >= 1:
                 cands.append({"leg": leg, "side": "buy", "kind": "quote", "price": b, "qty": qty,
-                              "prio": fair[leg] - b})
+                              "prio": r[leg] - b})
     # 2) race cap (and room_total): takes first (a sure fill beats a quote that may never fill),
     #    each group by largest edge;
     #    a leg is never sold beyond what is held (take + quote together)
     left, sold, cash_left = room, {"D": 0.0, "R": 0.0}, cash
+    lower_left = max(exposure, 0.0)                    # risk-reducing trades stop at zero exposure
     for o in sorted(cands, key=lambda o: (o["kind"] != "take", -o["prio"])):
         qty = o["qty"]
         if o["side"] == "sell":
@@ -143,17 +152,20 @@ def decide(books, p, held, room_total, kalshi_ok=True, kalshi_jump=False, cash=I
             qty = min(qty, cash_left / o["price"])
         if raises(o["leg"], o["side"]):
             qty = min(qty, left)
+        else:
+            qty = min(qty, lower_left)
         qty = math.floor(qty + 1e-9)
         if qty < 1:
             continue
         if raises(o["leg"], o["side"]):
             left -= qty
+        else:
+            lower_left -= qty
         if o["side"] == "sell":
             sold[o["leg"]] += qty
         else:
             cash_left -= qty * o["price"]
         out["orders"].append({"leg": o["leg"], "side": o["side"], "kind": o["kind"], "price": o["price"],
-                              "qty": qty, "edge_vs_fair": round(o["prio"] if o["kind"] == "quote" else
-                                                                (o["price"] - fair[o["leg"]] if o["side"] == "sell"
-                                                                 else fair[o["leg"]] - o["price"]), 4)})
+                              "qty": qty, "edge_vs_fair": round(o["price"] - fair[o["leg"]] if o["side"] == "sell"
+                                                                else fair[o["leg"]] - o["price"], 4)})
     return out

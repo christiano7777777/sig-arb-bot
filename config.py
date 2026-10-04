@@ -93,6 +93,7 @@ B_RACE_CAP = None          # per-race cap = total cap x the race's share of pair
 B_CLOSE_REF = 5_000        # closing: leftover size at which the buy-back bid is zero
 B_CLOSE_CLIP = 500         # closing: shares offered at the best ask per round (slow unwind)
 B_CLOSE_BID_RATIO = 0.5    # closing: buy-back bid = ratio * clip * (1 - leftover / B_CLOSE_REF)
+B_SKEW = 0.05             # holding: reservation price moves this far from fair at full race-cap exposure
 B_TOTAL_CAP_FRAC = 0.30    # max shares at risk over all races, as a fraction of portfolio value (user: 30%)
 B_MAX_ORDERS_PER_ROUND = 10  # keeps B inside the 30 writes/min account budget it shares with the arb
 
