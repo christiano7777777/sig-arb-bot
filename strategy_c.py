@@ -12,6 +12,8 @@ Quotes (no takes; never more than held is offered for sale):
     cuts risk     buy  NO_fav  AT the best bid (no improving: that would push away from Kalshi)
                   sell NO_und  AT the best ask
                   each only if the price is on the right side of r +- edge, and never past zero exposure
+Cut-only mode (C_CUT_ONLY, user 2026-10-05): no new inventory anywhere; every quote moves the exposure
+toward zero and never past it (no bids in races we do not hold).
 Inventory: risk-adding quotes only while exposure < C_LIMIT (size <= the room); above it only risk-cutting
 quotes, so today's large positions unwind as those fill. Inventory settles roughly where the skew
 offsets the mispricing: bigger SUSQ-Kalshi gaps hold more, small gaps hold almost nothing.
@@ -43,6 +45,8 @@ def quotes(books, p, held, cash):
     shift = max(-config.C_SKEW_MAX, min(config.C_SKEW_MAX, config.C_SKEW * exposure / config.C_LIMIT))
     r = {fav: fair[fav] + shift, und: fair[und] - shift}
     room = max(0.0, config.C_LIMIT - exposure)          # risk the adding quotes may still take on
+    if getattr(config, "C_CUT_ONLY", False):            # user, 2026-10-05: only reduce what C holds; the
+        room = max(0.0, -exposure)                       # 'adding' quotes may only bring a negative exposure to 0
     cut = max(0.0, exposure)                             # risk the cutting quotes may remove
     q, e, tick = config.C_CLIP, config.C_QUOTE_EDGE, config.TICK
     bb = {x: books[x]["bids"][0][0] if books[x]["bids"] else None for x in "DR"}

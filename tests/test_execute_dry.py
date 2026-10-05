@@ -8,6 +8,7 @@ from pathlib import Path
 os.environ.setdefault("SUSQ_API_KEY", "dummy")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import config  # noqa: E402
+config.C_CUT_ONLY = False  # the C tests below cover the two-sided mode; cut-only has its own test
 import execute  # noqa: E402
 
 TID = "t-1"
@@ -952,7 +953,32 @@ def test_c_above_its_limit_only_cuts_risk():
             assert o["price"] == 0.845                                                 # joins the best ask
 
 
+def test_c_cut_only_never_adds():
+    # same books and positions with and without cut-only: the two-sided mode adds risk, cut-only never does
+    # (flat race -> no quotes at all; long NO_R below the limit -> only buy NO_D / sell NO_R, at most the excess)
+    def run(d, r_, cut_only):
+        config.C_CUT_ONLY = cut_only
+        fake, r = _b_runner(d, r_, balance=5_000)
+        config.B_TOTAL_CAP_FRAC = 1.0
+        r.b.step(r.quotes(), r.positions())
+        adds = {(fake.ex_of("Delaware Senate", "D"), "sell"), (fake.ex_of("Delaware Senate", "R"), "buy")}
+        return _c_orders(r), adds
+    try:
+        got, _ = run(0, 0, True)
+        assert not got
+        got, adds = run(10_000, 11_500, False)
+        assert any((o["exchangeId"], o["action"]) in adds for o in got)              # two-sided mode adds
+        got, adds = run(10_000, 11_500, True)
+        assert not any((o["exchangeId"], o["action"]) in adds for o in got)          # cut-only does not
+        assert sum(o["quantity"] for o in got) <= 1_500
+        got, adds = run(12_000, 34_000, True)                                         # big legacy position
+        assert got and not any((o["exchangeId"], o["action"]) in adds for o in got)  # still unwinds it
+    finally:
+        config.C_CUT_ONLY = False
+
+
 def test_c_bids_only_in_a_race_we_do_not_hold():
+    config.C_CUT_ONLY = False
     fake, r = _b_runner(0, 0, balance=5_000)
     r.b.step(r.quotes(), r.positions())
     orders = _c_orders(r)

@@ -5,6 +5,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import config  # noqa: E402
+config.C_CUT_ONLY = False  # two-sided mode is tested here; cut-only in test_execute_dry
 import pair_maker  # noqa: E402
 import stat_model  # noqa: E402
 import strategy_c  # noqa: E402

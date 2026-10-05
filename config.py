@@ -127,6 +127,7 @@ C_SKEW = 0.10              # reservation price moves this far from Kalshi fair a
 C_SKEW_MAX = 0.25          # ... capped here (big legacy positions: strongest pull back toward flat)
 C_QUOTE_EDGE = 0.02        # quotes at least this far from the reservation price
 C_CLIP = 500               # shares per quote
+C_CUT_ONLY = True          # user, 2026-10-05: C only unwinds what it holds (no new inventory, no bids in other races)
 C_EXTRA_RACES = 5          # races we do not hold: bids on the cheap leg in the 5 with the biggest gap
 B_SKEW = 0.02             # holding: reservation price moves this far from fair at full race-cap exposure (user: slight)
 B_TOTAL_CAP_FRAC = 0.30    # max shares at risk over all races, as a fraction of portfolio value (user: 30%)
