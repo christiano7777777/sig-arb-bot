@@ -760,7 +760,15 @@ def main():
 
     runner = None
     try:
-        runner = Runner(SusqClient(), args.live, args.max_baskets)
+        for attempt in range(10):                  # startup reads can hit the shared rate limit or a 5xx
+            try:                                   # (live 2026-10-05 01:25: a 429 on the first read killed the run)
+                runner = Runner(SusqClient(), args.live, args.max_baskets)
+                break
+            except ApiError as e:
+                if e.status not in (429, 500, 502, 503, 504, 599) or attempt == 9:
+                    raise
+                print(f"startup: {e} -> retrying in 30 s ({attempt + 1}/10)")
+                time.sleep(30)
         while not STOP_FILE.exists():
             try:
                 runner.poll()
