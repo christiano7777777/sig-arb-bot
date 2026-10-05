@@ -377,16 +377,22 @@ class Runner:
         return total
 
     def cash_room(self):
-        """Core budget for strategy A's new pairs. With A_CAPITAL_CAP (user, 2026-10-04): A's holdings may tie
-        up at most that much capital, so the room is min(cash above HARD_RESERVE, cap - holdings at cost);
-        while A is over the cap it buys nothing new and only swaps. Without it: cash above RESERVE."""
+        """Core budget for strategy A's new pairs.
+        With CASH_SPLIT: A's share of the free cash (split["A"]; without an "A" key, whatever the others
+        leave), and with A_CAPITAL_CAP also at most cap - A's holdings at cost (over the cap: swaps only).
+        User 2026-10-05: cash is A's bottleneck (every poll 'out of budget' on ~50 races) -> A gets 25%
+        and no cap. Without a split: the legacy rules (cash above RESERVE, or min(free cash, cap room))."""
         cap = getattr(config, "A_CAPITAL_CAP", None)
-        if cap is None:
+        split = getattr(config, "CASH_SPLIT", None) or {}
+        if not split and cap is None:
             return self.cached_balance() - config.RESERVE
-        if self._a_cost is None:
-            self._a_cost = self.a_holdings_cost()
-        a_share = 1.0 - sum((getattr(config, "CASH_SPLIT", None) or {}).values())   # what the others leave
-        return min(self.free_cash() * a_share, cap - self._a_cost)
+        a_share = split["A"] if "A" in split else 1.0 - sum(v for k, v in split.items() if k != "A")
+        room = self.free_cash() * a_share
+        if cap is not None:
+            if self._a_cost is None:
+                self._a_cost = self.a_holdings_cost()
+            room = min(room, cap - self._a_cost)
+        return room
 
     def extra_room(self):
         """Extra budget: cash above HARD_RESERVE, usable only for edges >= EXTRA_MIN_EDGE (option B)."""

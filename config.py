@@ -33,11 +33,11 @@ TRADE_AT_ZERO_EDGE = False  # scan.py only
 # The arb strategy may use only the cash above RESERVE (initial 100,000 -> 50,000 for this strategy).
 # The budget is read from the live balance before every entry, so exits automatically free it again.
 RESERVE = 50_000             # (legacy, used only when A_CAPITAL_CAP is None) core budget = cash above this
-CASH_SPLIT = {"D": 0.5, "C": 0.3, "B": 0.2}   # user, 2026-10-04: free cash (above HARD_RESERVE) for new buys goes
-                             # to the other strategies; D's missing hedges are funded first. A gets no fresh cash
-                             # (it still swaps, and every swap releases cash to the others)
-A_CAPITAL_CAP = 50_000       # user, 2026-10-04: strategy A's pairs may tie up at most this much capital (at cost);
-                             # while over it A buys nothing new (swaps only); below it A may use free cash
+CASH_SPLIT = {"D": 0.5, "A": 0.25, "B": 0.2, "C": 0.05}   # user, 2026-10-05: share of the free cash (above
+                             # HARD_RESERVE) each strategy may use for new buys, read fresh every time (so cash the
+                             # others leave idle is used up step by step). D's missing hedges are funded first.
+                             # (2026-10-04: D 0.5 / C 0.3 / B 0.2, A none; C is cut-only now, cash was A's bottleneck)
+A_CAPITAL_CAP = None         # user, 2026-10-05: no cap on A (was 50,000 at cost on 2026-10-04)
 # Option B (user, 2026-10-04): the other 50k is used too, but only for book levels with edge >= EXTRA_MIN_EDGE,
 # so each extra trade pays for an early exit later. To drain back to 50% before the stat-arb starts,
 # set EXTRA_CAPITAL_ENABLED = False: the bot stops buying below RESERVE and gets cash back only from
@@ -132,7 +132,7 @@ C_EXTRA_RACES = 5          # races we do not hold: bids on the cheap leg in the 
 B_SKEW = 0.02             # holding: reservation price moves this far from fair at full race-cap exposure (user: slight)
 B_TOTAL_CAP_FRAC = 0.30    # max shares at risk over all races, as a fraction of portfolio value (user: 30%)
 MAKER_ENABLED = True       # pair maker (pair_maker.py): resting two-sided pair quotes on the largest held races
-MAKER_RACES = 6            # how many held races (largest by pairs) get pair quotes
+MAKER_RACES = 10           # how many held races (largest by pairs) get pair quotes
 MAKER_MIN_PAIRS = 500      # ... and only races holding at least this many pairs
 MAKER_CLIP = 500           # pairs per side per race
 MAKER_LIFE_S = 300         # quotes rest this long; re-posted only on expiry or when the best price moves

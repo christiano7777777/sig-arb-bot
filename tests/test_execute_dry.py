@@ -1084,6 +1084,16 @@ def test_a_gets_no_fresh_cash_when_split_among_others():
     assert r.sent == []
 
 
+def test_a_gets_its_cash_share_without_a_cap():
+    # user 2026-10-05: A gets 25% of the free cash, no cap; it buys within that share
+    fake = FakeClient({"Aaa race": EDGE_01}, balance=1_000 + 600)
+    r = make_runner(fake, a_cap=None, cash_split={"D": 0.5, "A": 0.25, "B": 0.2, "C": 0.05})
+    assert abs(r.cash_room() - 150) < 1e-6
+    r.poll()
+    buys = [b for _, b in r.sent if b["legs"][0]["action"] == "buy"]
+    assert buys and buys[0]["legs"][0]["quantity"] * sum(l["price"] for l in buys[0]["legs"]) <= 150 + 1e-6
+
+
 def test_b_c_round_works_with_ds_control_market_present():
     # live bug: D's control market ('U.S. Senate', no Kalshi race mapping) broke every B/C round
     import kalshi
