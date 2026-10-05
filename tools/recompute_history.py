@@ -30,5 +30,18 @@ for p in hist:
         if p.get("fair") is not None:
             p["fair"] = round(p["fair"] + diff, 2)
         changed += 1
+# Kalshi-fair dips (2026-10-05): a snapshot whose Kalshi reads partly failed recorded 'fair' with some C/D
+# positions missing. Where fair - settle sits > 300 below its rolling median (+-6 points), use the median.
+gaps = [(p["fair"] - p["settle"]) if p.get("fair") is not None else None for p in hist]
+dips = 0
+for i, g in enumerate(gaps):
+    if g is None or hist[i]["t"] >= cutoff:
+        continue
+    near = sorted(x for x in gaps[max(0, i - 6):i + 7] if x is not None)
+    med = near[len(near) // 2]
+    if g < med - 300:
+        hist[i]["fair"] = round(hist[i]["settle"] + med, 2)
+        dips += 1
+print(f"history: {dips} Kalshi-fair dips smoothed", file=sys.stderr)
 json.dump(hist, open(hist_path, "w", encoding="utf-8"), separators=(",", ":"))
 print(f"history: {changed} points recomputed from the trade replay", file=sys.stderr)

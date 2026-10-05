@@ -20,6 +20,44 @@ import pair_maker  # noqa: E402
 import strategy_c  # noqa: E402
 from susq_client import SusqClient  # noqa: E402
 
+# Kalshi quotes with a fallback (2026-10-05): the snapshot reads ~110 Kalshi markets every 2 minutes and some
+# get rate-limited (429); a failed race used to drop out of the Kalshi-fair line (and D's block), so the
+# dashboard curve spiked down for one point. A failed read now reuses that market's last good quote if it is
+# at most KALSHI_STALE_S old (kept in state/kalshi_cache.json between snapshot runs).
+KALSHI_CACHE = Path(__file__).resolve().parent.parent / "state" / "kalshi_cache.json"
+KALSHI_STALE_S = 900
+_k_live = kalshi.market
+try:
+    _k_cache = json.load(open(KALSHI_CACHE, encoding="utf-8"))
+except (OSError, ValueError):
+    _k_cache = {}
+
+
+def _k_market(ticker):
+    import time
+    try:
+        m = _k_live(ticker)
+        _k_cache[ticker] = [time.time(), m]
+        return m
+    except Exception:                                # noqa: BLE001 - fall back to a recent good quote
+        hit = _k_cache.get(ticker)
+        if hit and time.time() - hit[0] <= KALSHI_STALE_S:
+            return hit[1]
+        raise
+
+
+def _k_save():
+    try:
+        KALSHI_CACHE.parent.mkdir(exist_ok=True)
+        json.dump(_k_cache, open(KALSHI_CACHE, "w", encoding="utf-8"))
+    except OSError:
+        pass
+
+
+kalshi.market = _k_market
+import atexit  # noqa: E402
+atexit.register(_k_save)
+
 TITLE = re.compile(r"^Will the (\w+) Party win the (.+?)\??$")
 
 

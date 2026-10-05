@@ -134,7 +134,7 @@
     <h2>Activity</h2>
     <div class="tablewrap" style="margin-bottom:18px">
       <table>
-        <thead><tr><th>Window</th><th>Value gained (all)</th><th>Avg buy edge</th><th>Exits (S ≥ 1)</th><th>Exits / h</th><th>Swap sales</th><th>Swaps / h</th><th>Buys</th><th>Buys / h</th></tr></thead>
+        <thead><tr><th>Window</th><th>A value gained</th><th>Avg buy edge</th><th>Exits (S ≥ 1)</th><th>Exits / h</th><th>Swap sales</th><th>Swaps / h</th><th>Buys</th><th>Buys / h</th></tr></thead>
         <tbody id="activity"></tbody>
       </table>
     </div>
@@ -155,7 +155,7 @@
     <p class="note">Exit = both NO legs sold at a sum ≥ 1.000. Swap sale = held pairs sold below 1 to fund a bigger edge.
       Rates are orders per hour over the time each window actually covers. Pairs table sorted by current edge, lowest
       first (cheapest to give up, sold first in a swap). Pairs only: strategy B's extra shares are on the B tab.
-      "Value gained (all)" is the whole portfolio, both strategies.</p>
+      "A value gained" is strategy A's own value change (pairs pay 1, single legs at cost), not the whole portfolio.</p>
   </section>
 
   <section data-panel="m" hidden>
@@ -397,14 +397,17 @@ function renderD(d) {
 }
 
 let snap = null;
-// change in value at settlement over the last h hours, from the equity history
+// strategy A's own gain over the last h hours (its value: pairs pay 1, single legs at cost), from the
+// per-strategy values recorded in the history; null until both ends have them. (Before 2026-10-05 this was
+// the whole portfolio on the Kalshi-fair line, so C/D marks and Kalshi read failures showed up as "A losing".)
 function valueGained(h) {
-  if (hist.length < 2) return null;
-  const end = hist[hist.length - 1], t0 = new Date(end.t).getTime() - h * 3600e3;
-  let start = hist[0];
-  for (const p of hist) { if (new Date(p.t).getTime() <= t0) start = p; else break; }
-  // with strategy B: value with its leftovers at Kalshi fair when both ends have it (else settlement value)
-  return (end.fair != null && start.fair != null) ? end.fair - start.fair : end.settle - start.settle;
+  const pts = hist.filter(p => p.s2 && p.s2.A != null);
+  if (pts.length < 2) return null;
+  const end = pts[pts.length - 1], t0 = new Date(end.t).getTime() - h * 3600e3;
+  if (new Date(pts[0].t).getTime() > t0) return null;
+  let start = pts[0];
+  for (const p of pts) { if (new Date(p.t).getTime() <= t0) start = p; else break; }
+  return end.s2.A - start.s2.A;
 }
 
 function renderActivity() {
