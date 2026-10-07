@@ -78,5 +78,6 @@ jobs:
             bot.log
             STOP
             state/orders.jsonl
+            state/prices.jsonl
           if-no-files-found: ignore
           retention-days: 7

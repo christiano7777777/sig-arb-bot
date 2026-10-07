@@ -132,6 +132,9 @@ D_MAX_ORDERS = 6             # orders per round (largest deviations first)
 D_CLIP = 1_000               # control-leg shares per round
 D_CONTROL_RACE = "U.S. Senate"
 D_KALSHI_CONTROL = {"D": "CONTROLS-2026-D", "R": "CONTROLS-2026-R"}
+# Kalshi batch reads + price log for strategy E research (user, 2026-10-07; price_recorder.py)
+KALSHI_BATCH_S = 10          # all mapped tickers in ~3 requests every 10 s; None = off (C/D read per ticker again)
+PRICE_LOG_FULL_S = 600       # state/prices.jsonl: changes every cycle, a full line every 10 min
 D_RACES = ["Alabama", "Alaska", "Arkansas", "Colorado", "Delaware", "Florida", "Georgia", "Idaho", "Illinois",
            "Iowa", "Kansas", "Kentucky", "Louisiana", "Maine", "Massachusetts", "Michigan", "Minnesota",
            "Mississippi", "Montana", "Nebraska", "New Hampshire", "New Jersey", "New Mexico", "North Carolina",

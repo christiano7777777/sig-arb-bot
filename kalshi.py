@@ -5,14 +5,35 @@ For a race with a Democratic and a Republican market (tickers from kalshi_map.js
 Fair NO prices on SUSQ are then 1 - p_D and 1 - p_R = p_D.
 """
 import json
+import time
 import urllib.request
 
 BASE = "https://api.elections.kalshi.com/trade-api/v2"
+FRESH_S = 15            # a batch-read market this recent is served from the cache instead of a new request
+_CACHE = {}             # ticker -> (epoch, market), filled by batch() (price_recorder thread)
 
 
 def market(ticker):
+    hit = _CACHE.get(ticker)
+    if hit is not None and time.time() - hit[0] <= FRESH_S:
+        return hit[1]
     with urllib.request.urlopen(f"{BASE}/markets/{ticker}", timeout=5) as r:
         return json.load(r)["market"]
+
+
+def batch(tickers, chunk=100):
+    """Many markets in few requests (public, no key; verified 2026-10-07: 100 tickers per request, no paging).
+    Refreshes the cache market() reads from. Returns {ticker: market}."""
+    out = {}
+    for i in range(0, len(tickers), chunk):
+        part = tickers[i:i + chunk]
+        with urllib.request.urlopen(f"{BASE}/markets?limit=1000&tickers={','.join(part)}", timeout=10) as r:
+            ms = json.load(r).get("markets", [])
+        now = time.time()
+        for m in ms:
+            out[m["ticker"]] = m
+            _CACHE[m["ticker"]] = (now, m)
+    return out
 
 
 def fair(tickers, max_spread):

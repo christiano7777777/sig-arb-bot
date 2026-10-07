@@ -43,6 +43,7 @@ from arb_math import (ceil_to_tick, fill_price, floor_to_tick, no_asks_from_yes_
                       walk_baskets, walk_exit, widen_limits)
 from b_executor import BExecutor
 from d_executor import DExecutor
+from price_recorder import PriceRecorder
 from realtime_feed import Feed
 from baskets import list_markets, two_party_baskets
 from susq_client import ApiError, SusqClient
@@ -104,6 +105,9 @@ class Runner:
         if getattr(config, "REALTIME_ENABLED", False):
             self.feed = Feed(SusqClient(), self.tour["id"])    # own client: the token mint is its only call
             self.feed.start()
+        self.last_q = {}                              # SUSQ books of the last poll (price recorder)
+        if live and getattr(config, "KALSHI_BATCH_S", None):   # live runs only: tests never touch Kalshi
+            PriceRecorder(self, STATE_DIR / "prices.jsonl").start()
 
     # ---- reads -----------------------------------------------------------
     def feed_live(self):
@@ -267,6 +271,7 @@ class Runner:
                                     or time.time() - self._cash_t > config.POSITIONS_REFRESH_S):
             self._cash = None                     # (orders clear it too)
         q = self.quotes()
+        self.last_q = q                           # the price recorder logs the SUSQ books we saw
         held = self.positions(fresh=False)
         self._a_cost = None                       # A's holdings at cost, computed once per poll when needed
         small_cost, a_cost = self.a_small_bucket(held)
