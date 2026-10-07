@@ -33,7 +33,8 @@ TRADE_AT_ZERO_EDGE = False  # scan.py only
 # The arb strategy may use only the cash above RESERVE (initial 100,000 -> 50,000 for this strategy).
 # The budget is read from the live balance before every entry, so exits automatically free it again.
 RESERVE = 50_000             # (legacy, used only when A_CAPITAL_CAP is None) core budget = cash above this
-CASH_SPLIT = {"D": 0.5, "A": 0.25, "B": 0.2, "C": 0.05}   # user, 2026-10-05: share of the free cash (above
+CASH_SPLIT = {"D": 0.5, "A": 0.3, "B": 0.2, "C": 0.0}     # user, 2026-10-07: C's 5% to A (was A 0.25 / C 0.05)
+                             # (2026-10-05: D 0.5 / A 0.25 / B 0.2 / C 0.05) share of the free cash (above
                              # HARD_RESERVE) each strategy may use for new buys, read fresh every time (so cash the
                              # others leave idle is used up step by step). D's missing hedges are funded first.
                              # (2026-10-04: D 0.5 / C 0.3 / B 0.2, A none; C is cut-only now, cash was A's bottleneck)
@@ -140,6 +141,9 @@ C_SKEW_MAX = 0.25          # ... capped here (big legacy positions: strongest pu
 C_QUOTE_EDGE = 0.02        # quotes at least this far from the reservation price
 C_CLIP = 500               # shares per quote
 C_CUT_ONLY = True          # user, 2026-10-05: C only unwinds what it holds (no new inventory, no bids in other races)
+C_DUMP_GAP = 0.03          # user, 2026-10-07: sell C's excess leg into the bids while they are within this of Kalshi
+                           # fair (races without pairs only; the rest keeps unwinding at the best ask). None = off
+C_DUMP_PER_ROUND = 2       # races dumped per B round (each = cancel + order, inside the 30 writes/min budget)
 C_EXTRA_RACES = 5          # races we do not hold: bids on the cheap leg in the 5 with the biggest gap
 B_SKEW = 0.02             # holding: reservation price moves this far from fair at full race-cap exposure (user: slight)
 B_TOTAL_CAP_FRAC = 0.30    # max shares at risk over all races, as a fraction of portfolio value (user: 30%)

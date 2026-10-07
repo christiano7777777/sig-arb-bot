@@ -214,6 +214,41 @@ def test_d_spends_no_more_than_its_cash():
     assert sum(o["qty"] * o["price"] for o in res["orders"] if o["side"] == "buy") <= 300 + 1e-9
 
 
+# ---- C fast unwind (user, 2026-10-07): sell the excess leg into bids within C_DUMP_GAP of Kalshi fair ----
+def test_c_dump_sells_excess_leg_down_to_fair_minus_gap():
+    pin(); config.C_DUMP_GAP = 0.03
+    # Illinois-like: p_D 0.968, we hold 2,855 NO_R (fair 0.968); bids 0.945 x1,000, 0.94 x1,000, 0.935 x5,000
+    books = {"D": {"bids": [(0.03, 9000)], "asks": [(0.04, 9000)]},
+             "R": {"bids": [(0.945, 1000), (0.94, 1000), (0.935, 5000)], "asks": [(0.955, 9000)]}}
+    o = strategy_c.dump(books, {"D": 0.968, "R": 0.032}, {"D": 0, "R": 2_855})
+    assert o["leg"] == "R" and o["side"] == "sell" and o["kind"] == "take"
+    assert o["price"] == 0.94 and o["qty"] == 2_000              # 0.935 < 0.968 - 0.03 = 0.938 -> not sold
+
+
+def test_c_dump_never_sells_more_than_the_excess():
+    pin(); config.C_DUMP_GAP = 0.03
+    books = {"D": {"bids": [(0.5, 99_000)], "asks": [(0.51, 9000)]}, "R": {"bids": [(0.48, 9000)], "asks": [(0.49, 9000)]}}
+    o = strategy_c.dump(books, {"D": 0.5, "R": 0.5}, {"D": 700, "R": 200})   # p tie -> fav D, excess is NO_D 500
+    assert o["leg"] == "D" and o["qty"] == 500
+
+
+def test_c_dump_nothing_when_bids_too_far_below_fair_or_off():
+    pin(); config.C_DUMP_GAP = 0.03
+    books = {"D": {"bids": [(0.1, 9000)], "asks": [(0.105, 9000)]}, "R": {"bids": [(0.855, 9000)], "asks": [(0.86, 9000)]}}
+    assert strategy_c.dump(books, {"D": 0.986, "R": 0.014}, {"D": 0, "R": 2_497}) is None   # Delaware: 0.855 < 0.956
+    assert strategy_c.dump(books, {"D": 0.5, "R": 0.5}, {"D": 0, "R": 0}) is None          # nothing to sell
+    config.C_DUMP_GAP = None
+    assert strategy_c.dump(books, {"D": 0.15, "R": 0.85}, {"D": 0, "R": 500}) is None
+
+
+def test_c_dump_sells_when_bid_above_fair():
+    pin(); config.C_DUMP_GAP = 0.03
+    # CO-08-like: hold 500 NO_D, fair 0.146, best bid 0.21 (above fair: selling gains vs Kalshi)
+    books = {"D": {"bids": [(0.21, 300), (0.2, 900)], "asks": [(0.215, 9000)]}, "R": {"bids": [(0.765, 9000)], "asks": [(0.77, 9000)]}}
+    o = strategy_c.dump(books, {"D": 0.854, "R": 0.146}, {"D": 500, "R": 0})
+    assert o["leg"] == "D" and o["qty"] == 500 and o["price"] == 0.2 and o["edge_vs_fair"] > 0
+
+
 if __name__ == "__main__":
     names = [n for n in dir() if n.startswith("test_")]
     bad = 0

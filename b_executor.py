@@ -116,14 +116,32 @@ class BExecutor:
                 if gap >= config.C_QUOTE_EDGE:
                     extra.append((gap, b, k))
         extra = [(b, legs[b.name], hold[b.name], k) for _, b, k in sorted(extra, key=lambda t: -t[0])[:config.C_EXTRA_RACES]]
+        # C fast unwind (user, 2026-10-07): sell the excess leg into bids within C_DUMP_GAP of Kalshi fair, in
+        # races without pairs (A's pair races keep their leftovers). Cheap pre-check on the bulk quote first.
+        dumped = set()
+        if getattr(config, "C_DUMP_GAP", None) is not None:
+            for (b, ex, h), k in zip(active, fairs):
+                if len(dumped) >= config.C_DUMP_PER_ROUND:
+                    break
+                if not k["ok"] or min(h["D"], h["R"]) >= 1:
+                    continue
+                if strategy_c.dump({x: self.top_book(q, ex[x]) for x in "DR"}, k["p"], h) is None:
+                    continue                        # best bid already too far below fair: no book read
+                o = strategy_c.dump({x: self.full_book(ex[x]) for x in "DR"}, k["p"], h)
+                if o is None:
+                    continue
+                self.r.cancel_all([ex[o["leg"]]])   # our resting ask on this leg first (clears quote_live)
+                self.r.b_resting.discard(ex[o["leg"]])
+                self.send(b, ex[o["leg"]], o, o["qty"])
+                dumped.add(b.name)
         # C quotes: held races first, then the extra races; cash and the total room shared in that order
         want = {}
         for b, ex, h, k, jump in self.with_jumps([(b, ex, h, k) for (b, ex, h), k in zip(active, fairs)] + extra):
             if not k["ok"]:
                 print(f"  C {b.name}: Kalshi not trusted ({k.get('why', '')})")
                 continue
-            if jump:
-                continue                            # fair value just moved: no new quotes this round
+            if jump or b.name in dumped:
+                continue                            # fair value just moved / dumped this round: quote next round
             books = {x: self.top_book(q, ex[x]) for x in "DR"}
             res = strategy_c.quotes(books, k["p"], h, spend)
             for o in res["orders"]:

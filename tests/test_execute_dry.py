@@ -4,6 +4,7 @@ import os
 import sys
 import time
 import types
+from datetime import datetime, timezone
 from pathlib import Path
 
 os.environ.setdefault("SUSQ_API_KEY", "dummy")
@@ -85,6 +86,7 @@ def make_runner(fake, min_edge=0.005, exposure=None, capital=50_000, reserve=50_
     config.D_PAUSE_UNTIL_A_SMALL = None
     config.C_LIMIT, config.C_SKEW, config.C_SKEW_MAX, config.C_QUOTE_EDGE, config.C_CLIP = 2_000, 0.10, 0.25, 0.02, 500
     config.C_EXTRA_RACES = 5
+    config.C_DUMP_GAP, config.C_DUMP_PER_ROUND = None, 2
     config.POSITIONS_REFRESH_S, config.BULK_REFRESH_S = 30, 30
     config.MAKER_ENABLED = maker
     config.MAKER_RACES, config.MAKER_MIN_PAIRS, config.MAKER_CLIP = 6, 500, 500
@@ -567,14 +569,14 @@ def test_no_per_race_cap_when_none():
 DE = {"D": ([(0.875, 9000)], [(0.88, 9000)]), "R": ([(0.155, 9000)], [(0.16, 9000)])}
 
 
-def _b_runner(held_d, held_r, balance, kalshi_ok=True):
+def _b_runner(held_d, held_r, balance, kalshi_ok=True, p=None):
     import kalshi
     config.B_RACES = {"Delaware Senate": {"event": "SENATEDE-26", "D": "SENATEDE-26-D", "R": "SENATEDE-26-R"}}
     config.B_MIN_FAVOURITE, config.B_TAKE_EDGE, config.B_QUOTE_EDGE = 0.95, 0.05, 0.02
     config.B_RACE_CAP, config.B_TOTAL_CAP_FRAC, config.B_KALSHI_JUMP = None, 0.10, 0.02
     config.B_MAX_ORDERS_PER_ROUND, config.B_CLOSE_REF = 10, 5_000
     kalshi.fair = lambda tickers, max_spread: (
-        {"ok": True, "why": "", "p": {"D": 0.986, "R": 0.014}, "mid": {"D": 0.986, "R": 0.014}, "spread": {}}
+        {"ok": True, "why": "", "p": p or {"D": 0.986, "R": 0.014}, "mid": p or {"D": 0.986, "R": 0.014}, "spread": {}}
         if kalshi_ok else {"ok": False, "why": "test"})
     fake = FakeClient({"Delaware Senate": DE}, balance=balance)
     fake.held = {fake.ex_of("Delaware Senate", "D"): (-held_d, 0.12 * held_d),
@@ -1227,6 +1229,33 @@ def test_paused_d_spends_only_on_missing_hedges():
     deficit = 100 * 0.15 * 0.39
     res = strategy_d.plan(0.40, book, {"Texas Senate": 0.15}, hb, led, deficit)     # paused: budget = deficit
     assert not [o for o in res["orders"] if o["kind"] == "ctrl" and o["side"] == "buy"]   # no new control
+
+
+# ---- C fast unwind in the executor (user, 2026-10-07) -------------------------------------------------------
+def test_c_dump_takes_bids_near_fair_in_a_race_without_pairs():
+    # hold 1,000 NO_R only; Kalshi fair NO_R 0.86, best NO_R bid 0.84 (within 0.03) -> one take sell at the bid
+    fake, r = _b_runner(0, 1_000, balance=1_000, p={"D": 0.86, "R": 0.14})
+    config.C_DUMP_GAP = 0.03
+    r.b.step(r.quotes(), r.positions())
+    ex_r = fake.ex_of("Delaware Senate", "R")
+    takes = [o for o in _b_orders(r) if o["idempotencyKey"].endswith("c-take")]
+    assert len(takes) == 1 and takes[0]["exchangeId"] == ex_r and takes[0]["action"] == "sell"
+    assert takes[0]["price"] == 0.84 and takes[0]["quantity"] == 1_000
+    exp = datetime.fromisoformat(takes[0]["expirationDate"].replace("Z", "+00:00"))
+    assert (exp - datetime.now(timezone.utc)).total_seconds() <= config.ORDER_EXPIRY_S + 1   # short-lived take
+
+
+def test_c_dump_leaves_races_with_pairs_alone():
+    fake, r = _b_runner(500, 1_500, balance=1_000, p={"D": 0.86, "R": 0.14})   # 500 pairs + 1,000 extra NO_R
+    config.C_DUMP_GAP = 0.03
+    r.b.step(r.quotes(), r.positions())
+    assert not [o for o in _b_orders(r) if o["idempotencyKey"].endswith("c-take")]
+
+
+def test_c_dump_off_by_default_in_tests():
+    fake, r = _b_runner(0, 1_000, balance=1_000, p={"D": 0.86, "R": 0.14})
+    r.b.step(r.quotes(), r.positions())
+    assert not [o for o in _b_orders(r) if o["idempotencyKey"].endswith("c-take")]
 
 
 if __name__ == "__main__":

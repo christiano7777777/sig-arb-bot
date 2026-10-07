@@ -84,3 +84,29 @@ def quotes(books, p, held, cash):
         left[o["adds"]] -= o["qty"]
     out = [o for o in out if o["qty"] >= 1]
     return {"exposure": exposure, "reservation": {x: round(r[x], 4) for x in "DR"}, "orders": out}
+
+
+def dump(books, p, held):
+    """Fast unwind (user, 2026-10-07): sell C's excess leg into the bids at prices >= Kalshi fair - C_DUMP_GAP.
+    books[x]["bids"]: full NO bid ladder of leg x, best first. The excess leg is the one the cutting quotes sell:
+    the underdog's NO when exposure > 0, the favourite's NO when exposure < 0. Returns one take order
+    (limit = the lowest acceptable level reached, size = what those levels hold, at most the excess) or None."""
+    gap = getattr(config, "C_DUMP_GAP", None)
+    if gap is None:
+        return None
+    fav = max(p, key=p.get)
+    und = "R" if fav == "D" else "D"
+    fair = {x: 1.0 - p[x] for x in "DR"}
+    exposure = held[und] - held[fav]
+    leg, excess = (und, exposure) if exposure > 0 else (fav, -exposure)
+    floor_px = up(fair[leg] - gap)                       # on the tick grid, never below fair - gap
+    qty, px = 0.0, None
+    for price, size in books[leg]["bids"]:
+        if price < floor_px - 1e-9:
+            break
+        qty, px = qty + size, price
+    qty = math.floor(min(qty, excess, held[leg]) + 1e-9)
+    if px is None or qty < 1:
+        return None
+    return {"leg": leg, "side": "sell", "price": round(px, 6), "qty": qty, "adds": False, "kind": "take",
+            "edge_vs_fair": round(px - fair[leg], 4)}
