@@ -44,6 +44,8 @@ from arb_math import (ceil_to_tick, fill_price, floor_to_tick, no_asks_from_yes_
 from b_executor import BExecutor
 from d_executor import DExecutor
 from e_executor import EExecutor
+import urllib.request
+
 from price_recorder import PriceRecorder
 from realtime_feed import Feed
 from baskets import list_markets, two_party_baskets
@@ -52,6 +54,8 @@ from susq_client import ApiError, SusqClient
 HERE = Path(__file__).parent
 STOP_FILE = HERE / "STOP"
 STATE_DIR = HERE / "state"
+FOCUS_URL = "https://raw.githubusercontent.com/christiano7777777/sig-arb-bot/dashboard-data/focus.json"
+FOCUS_API = "https://api.github.com/repos/christiano7777777/sig-arb-bot/contents/focus.json?ref=dashboard-data"
 
 
 class Halt(Exception):
@@ -106,7 +110,10 @@ class Runner:
         self._a_room_cap = None                       # cap on A's cash room while the small-edge bucket refills
         self._d_paused = False                        # D's cash share goes to A (D_PAUSE_UNTIL_A_SMALL)
         self._small_spent = []                        # (time, cost) of small-edge buys (A_SMALL_PER_HOUR)
-        self.a_top = None                             # A's largest races this poll (A_TOP_N)
+        self.a_top = None                             # focus races this poll (A_TOP_N)
+        self.focus, self.exiting, self.newest = None, None, None   # focus rotation (state/focus.json)
+        self.focus_log, self._intake_t = [], 0.0
+        self.exited = {}                              # race -> epoch it was fully exited (not taken back in for 24 h)
         if getattr(config, "REALTIME_ENABLED", False):
             self.feed = Feed(SusqClient(), self.tour["id"])    # own client: the token mint is its only call
             self.feed.start()
@@ -302,7 +309,7 @@ class Runner:
         self._a_cost = None                       # A's holdings at cost, computed once per poll when needed
         small_cost, a_cost = self.a_small_bucket(held)
         self._d_paused = self.d_paused(small_cost, a_cost)
-        self.a_top = self.a_top_races(held)
+        self.focus_update(held, q)
         if self.b is not None:      # strategies B and C first: their buys are worth more than an arb entry
             self.b.step(q, held)
         if self.d is not None:      # strategy D: Senate-control stat arb (own ledger)
@@ -319,8 +326,10 @@ class Runner:
             if (config.EXIT_ENABLED and pairs >= 1 and None not in asks
                     and sum(1 - x for x in asks) >= config.EXIT_MIN_SUM - 1e-9):
                 exits.append((sum(1 - x for x in asks), b))
-        if self.a_top is not None:   # top-N focus: buys and swaps only into A's largest races (A_TOP_N)
-            entries = [t for t in entries if t[1].name in self.a_top]
+        if self.a_top is not None:   # focus: A buys in the focus races except the exit race; small edges outside
+            pot_on = bool(getattr(config, "A_SMALL_POT", None))   # the focus only for the small-edge pot
+            entries = [t for t in entries if (t[1].name in self.a_top and t[1].name != self.exiting)
+                       or (pot_on and t[1].name not in self.a_top and t[0] <= config.A_SMALL_EDGE + 1e-9)]
         entries.sort(key=lambda t: -t[0])                            # higher edge first
         exits = [b for _, b in sorted(exits, key=lambda t: -t[0])]  # best sell price first
         allow = self.a_small_allowance(small_cost, a_cost)
@@ -331,6 +340,8 @@ class Runner:
               f"{len(entries)} entry signal(s) {[f'{b.name} {e:.3f}' for e, b in entries]}, "
               f"{len(exits)} exit signal(s) {[b.name for b in exits]}"
               + (f", small-edge {small_cost / a_cost:.1%} of A, allowance {allow:.0f}" if a_cost > 0 and config.A_SMALL_FRAC else "")
+              + (f", focus {sorted(self.a_top)} exiting {self.exiting}, small-edge pot {small_cost:,.0f} (room {allow:,.0f})"
+                 if self.a_top is not None else "")
               + (", D paused (its cash share goes to A)" if self._d_paused else ""))
         # 1) every exit, best price first: exits are never delayed by entry work
         for b in exits:
@@ -350,7 +361,13 @@ class Runner:
                 continue
             if tried >= config.MAX_ENTRIES_PER_POLL:
                 break
-            small = config.A_SMALL_FRAC and edge <= config.A_SMALL_EDGE + 1e-9
+            pot_on = bool(getattr(config, "A_SMALL_POT", None))
+            small = ((config.A_SMALL_FRAC or pot_on) and edge <= config.A_SMALL_EDGE + 1e-9
+                     and (self.a_top is None or b.name not in self.a_top))
+            if (not small and pot_on and self.a_top is not None and self.a_small_allowance(
+                    *self.a_small_bucket(self._pos if self._pos is not None else held)) >= config.ROTATE_TRIGGER_CASH):
+                blocked.append(b)                                    # pot first: focus races swap-only meanwhile
+                continue
             if small:
                 # paced: at most the allowance (orders re-read positions into self._pos, spend is logged)
                 allow = self.a_small_allowance(*self.a_small_bucket(self._pos if self._pos is not None else held))
@@ -463,6 +480,82 @@ class Runner:
         frac = getattr(config, "D_PAUSE_UNTIL_A_SMALL", None)
         return bool(frac) and self.d is not None and total > 0 and small < frac * total - 1e-9
 
+    # ---- focus rotation (user, 2026-10-08) --------------------------------
+    def focus_update(self, held, q):
+        """Keep the focus (A_TOP_N races), choose the exit race, take in a new race once the exit race is gone."""
+        n = getattr(config, "A_TOP_N", None)
+        if not n:
+            self.a_top = self.exiting = None
+            return
+        if self.focus is None:
+            saved = self.load_focus() if self.live else None
+            if saved:
+                self.focus, self.exiting, self.newest = saved["focus"], saved.get("exiting"), saved.get("newest")
+                self.focus_log = saved.get("log", [])
+                self.exited = saved.get("exited", {})
+            else:
+                self.focus = sorted(self.a_top_races(held) or [])
+                self.save_focus(f"start: focus {self.focus} (A's {n} largest)")
+        pairs = {b.name: min(held.get(e, {}).get("no", 0.0) for e in b.ex) for b in self.baskets}
+        if self.exiting is not None and pairs.get(self.exiting, 0) < 1:
+            done, self.exiting = self.exiting, None
+            self.focus = [f for f in self.focus if f != done]
+            self.exited[done] = time.time()
+            self.save_focus(f"{done} fully exited")
+        if len(self.focus) < n and time.time() >= self._intake_t:
+            self._intake_t = time.time() + 300
+            new = self.pick_intake(q)
+            if new is not None:
+                self.focus.append(new)
+                self.newest = new
+                self.save_focus(f"{new} taken in")
+        if self.exiting is None and len(self.focus) >= n:
+            s = {}
+            for b in self.baskets:
+                asks = [q.get(e, {}).get("bestAsk") for e in b.ex]       # YES asks -> NO bids
+                if b.name in self.focus and b.name != self.newest and None not in asks and pairs.get(b.name, 0) >= 1:
+                    s[b.name] = sum(1 - x for x in asks)
+            if s:
+                self.exiting = max(s, key=s.get)                     # smallest current edge = highest bid sum
+                self.save_focus(f"{self.exiting} chosen for exit (bid sum {s[self.exiting]:.3f})")
+        self.a_top = set(self.focus)
+
+    def pick_intake(self, q):
+        """One race to take in: of the INTAKE_SHORTLIST races outside the focus with the best top-of-book edge,
+        the one whose book holds the largest total edge (pairs buyable at >= MIN_EDGE x their edge)."""
+        recent = {r for r, t in self.exited.items() if t > time.time() - 86_400}   # just sold: not bought straight back
+        cand = [(self.top_edge(q, b), b) for b in self.baskets if b.name not in self.focus and b.name not in recent]
+        cand = sorted([c for c in cand if c[0] is not None and c[0] >= config.MIN_EDGE - 1e-9],
+                      key=lambda c: -c[0])[:config.INTAKE_SHORTLIST]
+        best = None
+        for edge, b in cand:
+            res = walk_baskets([x["asks"] for x in b.books()], 1.0, config.MIN_EDGE)
+            total = res["quantity"] * (1 - res["avg_cost"]) if res["quantity"] else 0.0
+            print(f"  intake candidate {b.name}: {res['quantity']} pairs at avg {res.get('avg_cost') or 0:.4f}, "
+                  f"total edge {total:,.2f}")
+            if total > 0 and (best is None or total > best[0]):
+                best = (total, b.name)
+        return best[1] if best else None
+
+    def load_focus(self):
+        for url in (FOCUS_API, FOCUS_URL):          # the published state survives restarts
+            try:
+                req = urllib.request.Request(url, headers={"Accept": "application/vnd.github.raw"})
+                return json.load(urllib.request.urlopen(req, timeout=10))
+            except Exception:                       # noqa: BLE001 - none yet: start from A's largest races
+                continue
+        return None
+
+    def save_focus(self, why):
+        self.focus_log = (self.focus_log + [{"t": now_plus(0), "what": why}])[-30:]
+        print(f"  FOCUS: {why} | focus {self.focus}, exiting {self.exiting}")
+        try:
+            (STATE_DIR / "focus.json").write_text(json.dumps(
+                {"focus": self.focus, "exiting": self.exiting, "newest": self.newest, "exited": self.exited, "updated": now_plus(0),
+                 "log": self.focus_log}), encoding="utf-8")
+        except OSError:
+            pass
+
     def a_top_races(self, held):
         """Names of A's A_TOP_N largest races by pairs at cost (None = no focus). Same pairs as a_holdings_cost."""
         n = getattr(config, "A_TOP_N", None)
@@ -481,6 +574,9 @@ class Runner:
     def a_small_allowance(self, small, total):
         """Cash small-edge entries may still use now: the rest of this rolling hour's A_SMALL_PER_HOUR, at most
         what keeps the small-edge pairs within A_SMALL_FRAC of A's pairs at cost. 0 when off."""
+        pot = getattr(config, "A_SMALL_POT", None)
+        if pot:                                     # focus rotation: a fixed pot after E's 10k (user, 2026-10-08)
+            return max(0.0, pot - small)
         rate = getattr(config, "A_SMALL_PER_HOUR", None)
         if not getattr(config, "A_SMALL_FRAC", None) or not rate:
             return 0.0

@@ -89,6 +89,11 @@ A_SMALL_PER_HOUR = 300
 # Top-N focus (user, 2026-10-08): A buys and swaps only in its N largest races (pairs at cost, recomputed every
 # poll); races outside them are sold only by plain exits (bids sum >= 1, "0 edge") and never fund swaps.
 A_TOP_N = 3                  # None = all races
+# Focus rotation (user, 2026-10-08): the focus is A_TOP_N races saved in state/focus.json; B sells the exit race
+# (smallest current edge) until it is gone, then one race with the largest total edge on its book is taken in.
+A_SMALL_POT = 10_000         # after E's 10k: A's small-edge pot (edge <= A_SMALL_EDGE, outside the focus) up to this at cost
+INTAKE_SHORTLIST = 5         # races (best top-of-book edge) whose books are read to pick the next focus race
+MAKER_EXIT_CLIP = 2_000      # B's ask size per leg on the exit race (user: bigger clips)
 A_SMALL_PROTECT = True
 # D paused for A (user, 2026-10-07): while A's small-edge bucket is below this share of A's pairs at cost,
 # D's CASH_SPLIT share goes to A. D still exits and buys missing hedges (those draw on all free cash), but
@@ -174,6 +179,7 @@ C_QUOTES = False           # user, 2026-10-08: C stopped, no quotes anywhere (st
 C_DUMP_GAP = 0.15          # user, 2026-10-08 "sell everything now" (was 0.03): any bid within 0.15 of Kalshi fair, so a
                            # thin book is not sold into far below fair; user, 2026-10-07: sell C's excess leg into the bids while they are within this of Kalshi
                            # fair (races without pairs only; the rest keeps unwinding at the best ask). None = off
+C_DUMP_PAIR_GAP = 0.0       # user, 2026-10-08: one-sided legs in pair races sold into bids at >= Kalshi fair (None = keep)
 C_DUMP_PER_ROUND = 2       # races dumped per B round (each = cancel + order, inside the 30 writes/min budget)
 C_EXTRA_RACES = 5          # races we do not hold: bids on the cheap leg in the 5 with the biggest gap
 B_SKEW = 0.02             # holding: reservation price moves this far from fair at full race-cap exposure (user: slight)

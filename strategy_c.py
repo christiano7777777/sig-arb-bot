@@ -86,12 +86,12 @@ def quotes(books, p, held, cash):
     return {"exposure": exposure, "reservation": {x: round(r[x], 4) for x in "DR"}, "orders": out}
 
 
-def dump(books, p, held):
+def dump(books, p, held, gap=None):
     """Fast unwind (user, 2026-10-07): sell C's excess leg into the bids at prices >= Kalshi fair - C_DUMP_GAP.
     books[x]["bids"]: full NO bid ladder of leg x, best first. The excess leg is the one the cutting quotes sell:
     the underdog's NO when exposure > 0, the favourite's NO when exposure < 0. Returns one take order
     (limit = the lowest acceptable level reached, size = what those levels hold, at most the excess) or None."""
-    gap = getattr(config, "C_DUMP_GAP", None)
+    gap = getattr(config, "C_DUMP_GAP", None) if gap is None else gap
     if gap is None:
         return None
     fav = max(p, key=p.get)

@@ -14,7 +14,7 @@ import math
 import config
 
 
-def pair_quotes(books, held, cheapest_new_pair, cash, fav=None, room=math.inf):
+def pair_quotes(books, held, cheapest_new_pair, cash, fav=None, room=math.inf, clip=None, bids_on=True):
     """books: {"D"/"R": {"bids": [(px, qty)..], "asks": [..]}} NO prices, best first (top of book is enough).
     held: NO shares per leg. fav: Kalshi favourite, "either" (race B does not manage), or None (no limit).
     room: how far one leg filling alone may move the legs apart (B's risk room for the favourite), applied
@@ -26,12 +26,14 @@ def pair_quotes(books, held, cheapest_new_pair, cash, fav=None, room=math.inf):
     if len(asks) == 2 and pairs >= 1 and cheapest_new_pair is not None:
         s_ask = asks["D"] + asks["R"]
         if s_ask >= cheapest_new_pair + config.ROTATE_MIN_GAIN - 1e-9:
-            q = min(config.MAKER_CLIP, pairs)
+            q = min(clip or config.MAKER_CLIP, pairs)
             if fav is not None:
                 q = min(q, math.floor(room + 1e-9))   # a fill on NO_fav alone must fit B's risk room
             if q >= 1:
                 out += [{"leg": x, "side": "sell", "price": asks[x], "qty": q} for x in "DR"]
-    if len(bids) == 2:
+    # no bids while the legs are already MAKER_OVER_CAP apart (2026-10-08: Delaware had 5,670 extra NO_D):
+    # read from the positions every round, so a restart cannot reset it
+    if bids_on and len(bids) == 2 and abs(held["D"] - held["R"]) < getattr(config, "MAKER_OVER_CAP", math.inf):
         s_bid = bids["D"] + bids["R"]
         if s_bid <= 1.0 - config.MIN_EDGE + 1e-9:
             q = min(config.MAKER_CLIP, math.floor(cash / s_bid + 1e-9))

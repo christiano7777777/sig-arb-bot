@@ -39,6 +39,7 @@ while true; do
             git init -q -b dashboard-data
             cp "$repo_dir/state/health.json" health.json 2>/dev/null && git add health.json
             cp "$repo_dir/state/e.json" e.json 2>/dev/null && git add e.json      # strategy E live state
+            cp "$repo_dir/state/focus.json" focus.json 2>/dev/null && git add focus.json   # focus rotation state
             git add snapshot.json history.json
             [ -f order_tags.json ] && git add order_tags.json
             git -c user.name="github-actions[bot]" \

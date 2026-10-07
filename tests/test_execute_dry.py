@@ -86,6 +86,7 @@ def make_runner(fake, min_edge=0.005, exposure=None, capital=50_000, reserve=50_
     config.A_SMALL_EDGE, config.A_SMALL_FRAC = 0.01, small_frac
     config.A_SMALL_PER_HOUR, config.A_SMALL_PROTECT = 300, True
     config.A_TOP_N, config.C_QUOTES, config.D_FROZEN = None, True, False
+    config.A_SMALL_POT, config.C_DUMP_PAIR_GAP, config.MAKER_EXIT_CLIP, config.INTAKE_SHORTLIST = None, None, 2_000, 5
     config.D_PAUSE_UNTIL_A_SMALL = None
     config.C_LIMIT, config.C_SKEW, config.C_SKEW_MAX, config.C_QUOTE_EDGE, config.C_CLIP = 2_000, 0.10, 0.25, 0.02, 500
     config.C_EXTRA_RACES = 5
@@ -1422,6 +1423,89 @@ def test_startup_marks_held_races_for_our_leftover_quotes():
     r = make_runner(fake)
     r.mark_possible_leftover_quotes()
     assert r.b_resting == {fake.ex_of("Held race", "D"), fake.ex_of("Held race", "R")}   # not the race we do not hold
+
+
+# ---- focus rotation (user, 2026-10-08) ----------------------------------------------------------------------
+# F1: NO ask sum 0.98 (edge 0.02) and NO bid sum 0.96 -> the focus race with the smallest current edge
+ROT_F1 = {"D": ([(0.5, DEEP)], [(0.51, DEEP)]), "R": ([(0.52, DEEP)], [(0.53, DEEP)])}
+CHEAP_096 = {"D": ([(0.52, DEEP)], [(0.99, 5)]), "R": ([(0.52, DEEP)], [(0.99, 5)])}   # NO asks 0.48 + 0.48
+
+
+def _rot_runner(balance=1_000 + 600, pot=None):
+    races = {"F1 race": ROT_F1, "F2 race": NO_EDGE, "F3 race": EDGE_02, "Out race": EDGE_02, "Tiny race": EDGE_01}
+    fake = FakeClient(races, balance=balance)
+    fake.held = {}
+    for name, n in (("F1 race", 3_000), ("F2 race", 5_000), ("F3 race", 4_000)):
+        fake.held.update({fake.ex_of(name, "D"): (-n, 0.47 * n), fake.ex_of(name, "R"): (-n, 0.47 * n)})
+    r = make_runner(fake, reserve=1_000)
+    config.A_TOP_N, config.A_SMALL_POT = 3, pot
+    return fake, r
+
+
+def _bought(fake, r):
+    return [_race_of_any(fake, b["legs"][0]["exchangeId"]) for _, b in r.sent if b["legs"][0]["action"] == "buy"]
+
+
+def test_rotation_exits_the_smallest_current_edge_and_a_does_not_buy_it():
+    fake, r = _rot_runner()
+    r.poll()
+    assert set(r.focus) == {"F1 race", "F2 race", "F3 race"} and r.exiting == "F1 race"   # bid sum 0.96 vs 0.02
+    assert set(_bought(fake, r)) == {"F3 race"}            # F1 (exiting) and Out race show the same edge: not bought
+
+
+def test_rotation_takes_in_the_race_with_the_largest_total_edge_once_the_exit_race_is_gone():
+    fake, r = _rot_runner()
+    r.focus_update(r.positions(), r.quotes())
+    assert r.exiting == "F1 race"
+    for leg in "DR":
+        del fake.held[fake.ex_of("F1 race", leg)]           # B has sold all of F1
+    r.focus_update(r.positions(), r.quotes())
+    assert "F1 race" not in r.focus and "Out race" in r.focus     # 0.02 x deep book beats Tiny's 0.01; F1 just
+                                                                    # exited ties with Out but is not bought back
+    assert r.newest == "Out race" and r.exiting in ("F2 race", "F3 race")   # the newcomer is not exited at once
+
+
+def test_rotation_small_edge_pot_gets_cash_before_the_focus_races():
+    fake, r = _rot_runner(pot=300)
+    r.poll()
+    got = _bought(fake, r)
+    assert got and set(got) == {"Tiny race"}               # F3 (focus, edge 0.02) is swap-only while the pot fills
+    spent = sum(b["legs"][0]["quantity"] * sum(l["price"] for l in b["legs"]) for _, b in r.sent
+                if b["legs"][0]["action"] == "buy")
+    assert spent <= 300 + 1e-6
+
+
+def test_rotation_maker_only_asks_on_the_exit_race():
+    import types as _t
+    fake = FakeClient({"Delaware Senate": DE, "Other race": CHEAP_096}, balance=5_000)
+    config.B_RACES = {"Delaware Senate": {"event": "SENATEDE-26", "D": "SENATEDE-26-D", "R": "SENATEDE-26-R"}}
+    r = make_runner(fake, b_enabled=True)
+    r.a_top, r.exiting = {"Delaware Senate", "Other race"}, "Delaware Senate"
+    b = next(x for x in r.baskets if x.name == "Delaware Senate")
+    ex = {"D": fake.ex_of("Delaware Senate", "D"), "R": fake.ex_of("Delaware Senate", "R")}
+    want = r.b.exit_quotes(r.quotes(), [(b, ex, {"D": 10_000, "R": 10_000})])
+    sides = sorted((k[1], o["qty"], o["price"]) for k, (_, o) in want.items())
+    assert sides == [("sell", 2_000, 0.125), ("sell", 2_000, 0.845)]    # asks 0.97 >= other pair 0.96: no bids
+    r.exiting = None
+    assert r.b.exit_quotes(r.quotes(), [(b, ex, {"D": 10_000, "R": 10_000})]) == {}
+
+
+def test_maker_never_bids_while_legs_are_500_apart():
+    import pair_maker
+    config.MAKER_OVER_CAP, config.MAKER_CLIP, config.MIN_EDGE = 500, 500, 0.005
+    books = {"D": {"bids": [(0.10, 9000)], "asks": [(0.105, 9000)]}, "R": {"bids": [(0.85, 9000)], "asks": [(0.86, 9000)]}}
+    assert not [o for o in pair_maker.pair_quotes(books, {"D": 5_670, "R": 0}, None, 10_000) if o["side"] == "buy"]
+    assert [o for o in pair_maker.pair_quotes(books, {"D": 100, "R": 0}, None, 10_000) if o["side"] == "buy"]
+
+
+def test_one_sided_leg_in_a_pair_race_sold_only_at_or_above_kalshi_fair():
+    import strategy_c
+    config.TICK = 0.005
+    books = {"D": {"bids": [(0.10, 9000)], "asks": [(0.105, 9000)]}, "R": {"bids": [(0.85, 9000)], "asks": [(0.86, 9000)]}}
+    o = strategy_c.dump(books, {"D": 0.984, "R": 0.016}, {"D": 53_670, "R": 48_000}, gap=0.0)   # NO_D fair 0.016
+    assert o["leg"] == "D" and o["qty"] == 5_670 and o["price"] == 0.10
+    o = strategy_c.dump(books, {"D": 0.85, "R": 0.15}, {"D": 53_670, "R": 48_000}, gap=0.0)     # fair 0.15 > bid
+    assert o is None
 
 
 if __name__ == "__main__":

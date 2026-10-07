@@ -123,11 +123,13 @@ class BExecutor:
             for (b, ex, h), k in zip(active, fairs):
                 if len(dumped) >= config.C_DUMP_PER_ROUND:
                     break
-                if not k["ok"] or min(h["D"], h["R"]) >= 1:
+                pair_race = min(h["D"], h["R"]) >= 1      # one-sided legs there: C_DUMP_PAIR_GAP (user, 2026-10-08)
+                gap = getattr(config, "C_DUMP_PAIR_GAP", None) if pair_race else config.C_DUMP_GAP
+                if not k["ok"] or gap is None:
                     continue
-                if strategy_c.dump({x: self.top_book(q, ex[x]) for x in "DR"}, k["p"], h) is None:
+                if strategy_c.dump({x: self.top_book(q, ex[x]) for x in "DR"}, k["p"], h, gap) is None:
                     continue                        # best bid already too far below fair: no book read
-                o = strategy_c.dump({x: self.full_book(ex[x]) for x in "DR"}, k["p"], h)
+                o = strategy_c.dump({x: self.full_book(ex[x]) for x in "DR"}, k["p"], h, gap)
                 if o is None:
                     continue
                 self.r.cancel_all([ex[o["leg"]]])   # our resting ask on this leg first (clears quote_live)
@@ -189,6 +191,8 @@ class BExecutor:
         """Pair maker on the largest held races (pair_maker.py): the pair quotes wanted this round,
         {(exchangeId, side): (basket, order)}. Posting is left to reconcile()."""
         # NO ask sum of every race (without our own quotes): the pair a swap could rotate the cash into
+        if getattr(config, "A_TOP_N", None) and getattr(self.r, "a_top", None) is not None:
+            return self.exit_quotes(q, active)      # focus rotation: B only sells the exit race
         top = getattr(self.r, "a_top", None)        # A buys only there (A_TOP_N), so only those can take the cash
         pair_ask = {b.name: sum(1 - q[e]["bestBid"] for e in b.ex) for b in self.r.baskets
                     if all(q.get(e, {}).get("bestBid") is not None for e in b.ex) and (top is None or b.name in top)}
@@ -212,6 +216,23 @@ class BExecutor:
             for o in pair_maker.pair_quotes(books, h, cheapest, spend, fav, rroom):
                 if o["side"] == "buy":
                     spend -= o["qty"] * o["price"]
+                want[(ex[o["leg"]], o["side"])] = (b, {**o, "kind": "maker", "edge_vs_fair": 0.0})
+        return want
+
+    def exit_quotes(self, q, active):
+        """Focus rotation (user, 2026-10-08): asks on both legs of the exit race only, MAKER_EXIT_CLIP pairs, and
+        only while its ask sum >= the cheapest pair in the other focus races + ROTATE_MIN_GAIN. No bids."""
+        exiting, want = getattr(self.r, "exiting", None), {}
+        if exiting is None:
+            return want
+        others = [b for b in self.r.baskets if b.name in self.r.a_top and b.name != exiting
+                  and all(q.get(e, {}).get("bestBid") is not None for e in b.ex)]
+        cheapest = min((sum(1 - q[e]["bestBid"] for e in b.ex) for b in others), default=None)
+        for b, ex, h in active:
+            if b.name != exiting:
+                continue
+            books = {x: self.top_book(q, ex[x]) for x in "DR"}
+            for o in pair_maker.pair_quotes(books, h, cheapest, 0.0, clip=config.MAKER_EXIT_CLIP, bids_on=False):
                 want[(ex[o["leg"]], o["side"])] = (b, {**o, "kind": "maker", "edge_vs_fair": 0.0})
         return want
 

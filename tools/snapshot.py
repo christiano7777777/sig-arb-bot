@@ -159,6 +159,7 @@ def build(c):
         "history_complete": dict(SYNC),          # fills/trades loaded back to the start (else the split is partial)
         "d": d_view,
         "e": e_view,
+        "focus": read_focus(),                   # focus rotation state written by the bot (state/focus.json)
         "b": b,
         "activity": activity,
         "recent": recent,
@@ -189,6 +190,14 @@ def build(c):
 
 
 CACHE = Path(__file__).resolve().parents[1] / "state" / "trades_cache.json"
+FOCUS = Path(__file__).resolve().parents[1] / "state" / "focus.json"
+
+
+def read_focus():
+    try:
+        return json.loads(FOCUS.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
 WINDOWS_H = (1, 6, 24)
 
 
