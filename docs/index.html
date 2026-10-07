@@ -471,12 +471,6 @@ function drawChart() {
   document.querySelectorAll("#winbar button").forEach(btn =>
     btn.setAttribute("aria-pressed", String(+btn.dataset.w === winHours)));
   const pts = windowPoints();
-  if (k === "A" && loading()) {
-    const from = pts.length ? new Date(pts[0].t).toLocaleString() : "now";
-    document.getElementById("l" + k).innerHTML = `<span><i style="background:${SCOL[k]}"></i>${SNAME[k]}: <b>–</b></span>`;
-    svg.innerHTML = `<text x="${W / 2}" y="${H / 2}" text-anchor="middle" style="fill:var(--muted);font-size:12px">Loading trade history after a bot restart (back to ${esc(from)} so far)…</text>`;
-    return;
-  }
   if (pts.length < 2) {
     svg.innerHTML = `<text x="${W / 2}" y="${H / 2}" text-anchor="middle">Not enough data in this window yet (one point every 2 min).</text>`;
     document.getElementById("legend").innerHTML = "";
@@ -582,8 +576,14 @@ function drawStrat(k) {
   document.getElementById("l" + k).innerHTML = `<span><i style="background:${SCOL[k]}"></i>${SNAME[k]}: <b>${fmt(now)}</b></span>`;
   document.getElementById("n" + k).textContent = k === "A"
     ? "Its own trades only: cash flow + what it holds, a pair paying 1 and single legs at cost (like the main curve)." +
-      ((snap.strategy_now || {}).U ? ` Unattributed trades (no matching tagged fill): ${fmt(snap.strategy_now.U)}.` : "")
+      (((snap && snap.strategy_now) || {}).U ? ` Unattributed trades (no matching tagged fill): ${fmt(snap.strategy_now.U)}.` : "")
     : `Its own trades only: cash flow + what it holds at the current SUSQ market value (mid), recorded from ${liveFrom ? new Date(liveFrom).toLocaleString() : "now on"}; before that at cost.`;
+  if (k === "A" && loading()) {
+    const from = pts.length ? new Date(pts[0].t).toLocaleString() : "now";
+    document.getElementById("l" + k).innerHTML = `<span><i style="background:${SCOL[k]}"></i>${SNAME[k]}: <b>–</b></span>`;
+    svg.innerHTML = `<text x="${W / 2}" y="${H / 2}" text-anchor="middle" style="fill:var(--muted);font-size:12px">Loading trade history after a bot restart (back to ${esc(from)} so far)…</text>`;
+    return;
+  }
   if (pts.length < 2) {
     svg.innerHTML = `<text x="${W / 2}" y="${H / 2}" text-anchor="middle" style="fill:var(--muted);font-size:12px">Waiting for data…</text>`;
     return;
