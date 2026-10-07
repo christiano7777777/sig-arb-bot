@@ -113,11 +113,11 @@
     <div class="split">
       <div class="panel pa"><div class="ptitle"><span class="badge ba">A</span> NO+NO arbitrage <span class="n">no directional risk</span></div>
         <div class="cards" id="sumA"></div></div>
-      <div class="panel pm"><div class="ptitle"><span class="badge bm">B</span> Pair maker <span class="n">resting pair quotes</span></div>
+      <div class="panel pm"><div class="ptitle"><span class="badge bm">B</span> Pair maker <span class="n" id="msub">resting pair quotes</span></div>
         <div class="cards" id="sumM"></div></div>
       <div class="panel pb"><div class="ptitle"><span class="badge bb">C</span> Kalshi market making <span class="n" id="csub">two-sided, inventory-limited</span></div>
         <div class="cards" id="sumB"></div></div>
-      <div class="panel pd"><div class="ptitle"><span class="badge bd">D</span> Senate stat arb <span class="n">delta-hedged</span></div>
+      <div class="panel pd"><div class="ptitle"><span class="badge bd">D</span> Senate stat arb <span class="n" id="dsub">delta-hedged</span></div>
         <div class="cards" id="sumD"></div></div>
       <div class="panel pe"><div class="ptitle"><span class="badge be">E</span> Kalshi breakout <span class="n">own 10k, directional</span></div>
         <div class="cards" id="sumE"></div></div>
@@ -136,8 +136,18 @@
       <div class="chartwrap"><svg id="cA" style="width:100%;height:220px;display:block;touch-action:pan-y" role="img" aria-label="A arbitrage P&amp;L over time"></svg><div class="tip" id="tA" hidden></div></div>
       <p class="note" id="nA" style="margin:4px 0 0"></p>
     </div>
-    <p class="strat"><span class="badge ba">A</span> Buys one NO share of each party (pays ≥ 1 whoever wins) below 1; exits at ≥ 1;
+    <p class="strat" id="aintro"><span class="badge ba">A</span> Buys one NO share of each party (pays ≥ 1 whoever wins) below 1; exits at ≥ 1;
       swaps held pairs into bigger edges (buy first when cash covers it). No directional risk.</p>
+    <div id="rotation" hidden>
+      <h2>Focus rotation <span class="n">(since 2026-10-08)</span></h2>
+      <div class="cards" id="rotcards"></div>
+      <div class="tablewrap" style="margin-bottom:18px">
+        <table>
+          <thead><tr><th>Time</th><th>Rotation event</th></tr></thead>
+          <tbody id="rotlog"></tbody>
+        </table>
+      </div>
+    </div>
     <h2>Activity</h2>
     <div class="tablewrap" style="margin-bottom:18px">
       <table>
@@ -160,13 +170,12 @@
       </table>
     </div>
     <p class="note">Exit = both NO legs sold at a sum ≥ 1.000. Swap sale = held pairs sold below 1 to fund a bigger edge.
-      Rates are orders per hour over the time each window actually covers. Pairs table sorted by current edge, lowest
-      first (cheapest to give up, sold first in a swap). Pairs only: strategy B's extra shares are on the B tab.
+      Rates are orders per hour over the time each window actually covers. Pairs table sorted by role (B exiting, focus, small-edge pot, held), then size. Pairs only: strategy B's extra shares are on the B tab.
       "A value gained" is strategy A's own value change (pairs pay 1, single legs at cost), not the whole portfolio.</p>
   </section>
 
   <section data-panel="m" hidden>
-    <p class="strat"><span class="badge bm">B</span> Rests pair quotes on the largest held races: asks on both legs at the best
+    <p class="strat" id="mintro"><span class="badge bm">B</span> Rests pair quotes on the largest held races: asks on both legs at the best
       asks (sells pairs at the ask sum, only when a swap could redeploy at a gain), bids on both legs at the best bids
       while the bid sum stays below 1. No Kalshi view; a one-leg fill may move a race at most 500 shares.</p>
     <h2>B pair maker equity <span class="n">(P&amp;L since the Cup began)</span></h2>
@@ -180,8 +189,8 @@
       <p class="note" id="nB" style="margin:4px 0 0"></p>
     </div>
 
-    <h2><span class="badge bm">B</span> Pair maker <span class="n">(resting pair quotes on the largest held races)</span></h2>
-    <h2>Markets B quotes <span class="n">(the largest held races; NO prices)</span></h2>
+    <h2><span class="badge bm">B</span> Pair maker <span class="n" id="mhead2">(resting pair quotes on the largest held races)</span></h2>
+    <h2>Markets B quotes <span class="n" id="mhead">(the largest held races; NO prices)</span></h2>
     <div class="tablewrap" style="margin-bottom:18px">
       <table>
         <thead><tr><th>Race</th><th>Pairs held</th><th>NO Dem bid / ask</th><th>NO Rep bid / ask</th><th>Pair ask sum</th>
@@ -227,8 +236,9 @@
       </table>
     </div>
     <p class="note">C's quotes sit around a reservation price = Kalshi fair (mid, overround removed) skewed against our
-      inventory. Cut-only (since 2026-10-05): no new inventory, every quote reduces what C holds. Since 2026-10-07 C also sells
-      its leftover leg straight into the bids while they are within 0.03 of Kalshi fair (races without arb pairs only).
+      inventory. Cut-only (since 2026-10-05): no new inventory, every quote reduces what C holds. Stopped on 2026-10-08:
+      no quotes; its legs were sold into the bids (within 0.15 of Kalshi fair), and one-sided legs in pair races are
+      sold only at or above Kalshi fair.
       Quotes never make the pair cheaper for others.
       At risk = shares that pay 0 if the underdog wins. Holding: the race still has arb pairs. Closing: no pairs left,
       the leftover is unwound slowly with skewed quotes. Trades are attributed exactly from our order tags since
@@ -236,6 +246,8 @@
       probabilities, not a locked profit.</p>
   </section>
   <section data-panel="d" hidden>
+    <p class="strat" id="dfrozen" hidden><span class="badge bd">D</span> <b>Frozen since 2026-10-08:</b> no orders; the position below
+      (control plus its state hedges) is held to settlement.</p>
     <p class="strat"><span class="badge bd">D</span> Trades SUSQ's "U.S. Senate" market toward Kalshi's control price and hedges it with
       the state Senate races: hedge per state = control position x delta, delta = how often that race decides control under a
       national-swing model calibrated to Kalshi (correlation rho). Enter at a gap of <span id="dentry"></span>, exit everything at
@@ -332,10 +344,10 @@ function render(d) {
   const pnl = d.value_at_settlement - d.initial;
   const mtm = d.mark_to_market - d.initial;
   document.getElementById("cards").innerHTML =
-    card("Value at settlement", fmt(d.value_at_settlement), `${pnl >= 0 ? "+" : ""}${fmt(pnl)} vs ${fmt(d.initial, 0)} · C and D positions at cost`, pnl >= 0 ? "pos" : "neg") +
-    (d.value_fair != null ? card("With C and D at Kalshi fair", fmt(d.value_fair),
+    card("Value at settlement", fmt(d.value_at_settlement), `${pnl >= 0 ? "+" : ""}${fmt(pnl)} vs ${fmt(d.initial, 0)} · C, D and E positions at cost`, pnl >= 0 ? "pos" : "neg") +
+    (d.value_fair != null ? card("With C, D and E at Kalshi fair", fmt(d.value_fair),
                 (v => `${v >= 0 ? "+" : ""}${fmt(v)} vs start`)(d.value_fair - d.initial)) : "") +
-    card("Cash", fmt(d.cash), (d.cash_split ? `new cash: ${["A", "B", "C", "D"].map(k => `${k} ${Math.round((d.cash_split[k] || 0) * 100)}%`).join(" · ")} · ` : "") + (d.extra_enabled
+    card("Cash", fmt(d.cash), (d.cash_split ? `new cash: ${d.focus ? "E's 10k first, then " : ""}${["A", "B", "C", "D"].filter(k => d.cash_split[k]).map(k => `${k} ${Math.round(d.cash_split[k] * 100)}%`).join(" · ")} · ` : "") + (d.extra_enabled
       ? `${fmt(Math.max(d.cash - d.reserve, 0))} for any edge · ${fmt(Math.max(d.cash - d.hard_reserve, 0))} for edge ≥ ${d.extra_min_edge}`
       : (d.a_cap != null || d.hard_reserve != null) ? `${fmt(Math.max(d.cash - d.hard_reserve, 0))} free above the ${fmt(d.hard_reserve, 0)} hard reserve`
       : d.cash >= d.reserve ? `${fmt(d.cash - d.reserve)} above ${fmt(d.reserve, 0)} reserve`
@@ -349,11 +361,13 @@ function render(d) {
   renderB(d.b);       // uses snap
   renderD(d.d);
   renderE(d.e);
+  renderRotation(d);
   const a24 = (d.activity || {})["24h"] || {};
   const locked = d.rows.reduce((s, r) => s + (r.locked || 0), 0);
   document.getElementById("sumA").innerHTML =
     (d.a_cap != null ? card("Capital used", fmt(d.a_capital, 0), `of ${fmt(d.a_cap, 0)} cap · ${d.a_capital > d.a_cap ? "over: no new buys, swaps only" : fmt(d.a_cap - d.a_capital, 0) + " left to buy"}`,
-                            d.a_capital > d.a_cap ? "neg" : "") : card("Capital used", fmt(d.a_capital, 0), "pairs at cost · no cap" + (d.cash_split ? `, ${Math.round((d.cash_split.A || 0) * 100)}% of new cash` : ""))) +
+                            d.a_capital > d.a_cap ? "neg" : "") : card("Capital used", fmt(d.a_capital, 0), "pairs at cost · " + (d.focus ? `new cash: E's 10k first, then the ${fmt(d.small_pot, 0)} small-edge pot, then the focus races`
+       : "no cap" + (d.cash_split ? `, ${Math.round((d.cash_split.A || 0) * 100)}% of new cash` : "")))) +
     card("Pairs held", fmt(d.pairs, 0), `${d.rows.filter(r => r.pairs > 0).length} races`) +
     card("Locked on held pairs", "+" + fmt(locked), "pairs pay 1 − what they cost") +
     card("Trades, last 24h", fmt(((a24.buy || {}).orders || 0) + ((a24.swap || {}).orders || 0) + ((a24.exit || {}).orders || 0), 0),
@@ -364,12 +378,13 @@ function render(d) {
     card("Fills, last 24h", fmt((mk["24h"] || {}).fills || 0, 0), `${fmt((mk["24h"] || {}).shares || 0, 0)} shares`) +
     card("Fills, last 1h", fmt((mk["1h"] || {}).fills || 0, 0), `${fmt((mk["1h"] || {}).shares || 0, 0)} shares`);
   document.getElementById("sumB").innerHTML = !b ? card("Strategy C", "off", "") :
-    card("Shares at risk", fmt((b.c_summary || {}).exposure, 0), (b.c_summary || {}).cut_only ? "all being unwound (cut-only)"
+    card("Shares at risk", fmt((b.c_summary || {}).exposure, 0), snap.c_stopped ? "C stopped: being sold" : (b.c_summary || {}).cut_only ? "all being unwound (cut-only)"
          : `${fmt((b.c_summary || {}).above_limit, 0)} above the ${fmt((b.c_summary || {}).limit, 0)}/race limit, unwinding`) +
     card("Expected gain vs Kalshi", (b.expected_gain_vs_kalshi >= 0 ? "+" : "") + fmt(b.expected_gain_vs_kalshi), "estimate, not locked",
          b.expected_gain_vs_kalshi >= 0 ? "pos" : "neg");
   const dd = d.d;
   document.getElementById("sumD").innerHTML = !dd ? card("Strategy D", "off", "") : dd.error ? card("Strategy D", "–", esc(dd.error)) :
+    loading() ? card("Strategy D", "loading…", "fill history reloading after a bot restart") :
     card("Gap (Rep control)", dd.gap == null ? "–" : (dd.gap >= 0 ? "+" : "") + fmt(dd.gap, 4), `Kalshi ${fmt(dd.kalshi_r, 3)} vs SUSQ ${fmt(dd.susq_r, 4)}`) +
     card("Position", fmt(dd.control, 0), dd.direction > 0 ? "long Rep control" : dd.direction < 0 ? "short Rep control" : "flat") +
     card("D P&L", (dd.pnl_bid >= 0 ? "+" : "") + fmt(dd.pnl_bid), "at SUSQ bids", dd.pnl_bid >= 0 ? "pos" : "neg");
@@ -404,8 +419,12 @@ function render(d) {
 function renderB(b) {
   if (!b) { document.getElementById("bintro").textContent = "Strategy C is off."; return; }
   const cs = b.c_summary || {};
-  document.getElementById("csub").textContent = cs.cut_only ? "unwinding (cut-only)" : "two-sided, inventory-limited";
-  document.getElementById("bintro").innerHTML = cs.cut_only
+  const cStop = snap && snap.c_stopped;
+  document.getElementById("csub").textContent = cStop ? "stopped" : cs.cut_only ? "unwinding (cut-only)" : "two-sided, inventory-limited";
+  document.getElementById("bintro").innerHTML = cStop
+    ? `<span class="badge bb">C</span> Stopped (2026-10-08): no quotes. Leftover legs in races without arb pairs are sold into
+       bids within ${fmt(snap.c_dump_gap, 2)} of Kalshi fair; one-sided legs in pair races only at or above Kalshi fair.`
+    : cs.cut_only
     ? `<span class="badge bb">C</span> Unwinding: no new inventory (cut-only). Sells its leftover leg into the bids while they are
        within ${fmt(cs.dump_gap, 2)} of Kalshi fair (races without arb pairs); the rest rests at the best ask, skewed against inventory.`
     : `<span class="badge bb">C</span> Quotes both sides around Kalshi fair value, skewed against inventory (${fmt(cs.skew, 2)} at ${fmt(cs.limit, 0)} shares);
@@ -438,6 +457,14 @@ function renderB(b) {
   document.getElementById("mcards").innerHTML = ["1h", "6h", "24h"].filter(w => m[w]).map(w =>
     card(`Fills, last ${w}`, fmt(m[w].fills, 0), `${fmt(m[w].shares, 0)} shares`)).join("");
   const mv = b.maker_view || { races: [] };
+  const exitMode = mv.mode === "exit";
+  document.getElementById("msub").textContent = exitMode ? `selling ${mv.exiting}` : "resting pair quotes";
+  document.getElementById("mhead2").textContent = exitMode ? "(selling the exit race of the focus rotation)" : "(resting pair quotes on the largest held races)";
+  document.getElementById("mhead").textContent = exitMode ? "(the exit race of the focus rotation; NO prices)" : "(the largest held races; NO prices)";
+  if (exitMode) document.getElementById("mintro").innerHTML = `<span class="badge bm">B</span> Focus rotation: B only sells the
+    exit race (${esc(mv.exiting)}), asks on both legs at the best asks, ${fmt(mv.clip, 0)} pairs per quote, and only while its
+    ask sum is at or above the cheapest pair in the other focus races (so the cash can be redeployed at a gain). No bids.
+    When its pairs are gone, one new race comes in. B never bids while a race's legs are 500 or more apart.`;
   const lg = x => x === "D" ? "Dem" : "Rep";
   document.getElementById("mrows").innerHTML = mv.races.map(r => `<tr><td>${esc(r.race)}</td><td>${fmt(r.pairs, 0)}</td>
     <td>${fmt(r.book.D.bid, 3)} / ${fmt(r.book.D.ask, 3)}</td><td>${fmt(r.book.R.bid, 3)} / ${fmt(r.book.R.ask, 3)}</td>
@@ -446,6 +473,29 @@ function renderB(b) {
     || `<tr><td colspan="8" class="n">No held race with at least ${fmt(mv.min_pairs, 0)} pairs.</td></tr>`;
   document.getElementById("mrecent").innerHTML = (m.recent || []).map(t => tradeRow(t, false)).join("")
     || `<tr><td colspan="6" class="n">No pair-maker fills since order tagging began.</td></tr>`;
+}
+
+function renderRotation(d) {
+  const f = d.focus, box = document.getElementById("rotation");
+  box.hidden = !f;
+  if (!f) return;
+  const rows = d.rows.filter(r => r.pairs > 0);
+  const ex = rows.find(r => r.race === f.exiting);
+  const pot = rows.filter(r => !(f.focus || []).includes(r.race) && r.avg_cost >= 0.99 - 1e-9)
+    .reduce((s, r) => s + r.pairs * r.avg_cost, 0);
+  const e = d.e || {};
+  document.getElementById("aintro").innerHTML = `<span class="badge ba">A</span> Buys one NO share of each party (pays ≥ 1
+    whoever wins) below 1, in the focus races only (not the one B is selling), plus small edges (≤ ${fmt(d.small_edge, 2)}) outside
+    them for the small-edge pot. New cash: E's 10k first, then the ${fmt(d.small_pot, 0)} pot, then the focus races. Races outside
+    the focus are held to settlement or sold at 1 (plain exits); they never fund swaps. No directional risk.`;
+  document.getElementById("rotcards").innerHTML =
+    card("Focus races", (f.focus || []).length, (f.focus || []).map(esc).join(" · ")) +
+    card("B exiting", f.exiting ? esc(f.exiting) : "–", ex ? `${fmt(ex.pairs, 0)} pairs left · bid sum ${fmt(ex.sell_sum, 3)} · ask sum ${fmt(ex.buy_sum, 3)}`
+         : f.exiting ? "no pairs left: next race comes in" : "chosen once 3 races are in focus") +
+    card("Newest in focus", f.newest ? esc(f.newest) : "–", f.newest ? "not chosen as the next exit" : "none taken in yet") +
+    card("Cash order", `E ${fmt(e.cash, 0)}`, `E's own cash (10k first) · then pot ${fmt(pot, 0)} of ${fmt(d.small_pot, 0)} · then focus`);
+  document.getElementById("rotlog").innerHTML = (f.log || []).slice().reverse().map(x =>
+    `<tr><td>${new Date(x.t).toLocaleString()}</td><td>${esc(x.what)}</td></tr>`).join("");
 }
 
 function renderE(e) {
@@ -504,7 +554,13 @@ function renderELive() {
 }
 
 function renderD(d) {
+  document.getElementById("dfrozen").hidden = !(snap && snap.d_frozen);
+  document.getElementById("dsub").textContent = snap && snap.d_frozen ? "frozen, held to settlement" : "delta-hedged";
   if (!d) { document.getElementById("dcards").innerHTML = card("Strategy D", "off", ""); return; }
+  if (loading()) {      // D's position comes from its fills, which reload after a bot restart
+    document.getElementById("dcards").innerHTML = card("Strategy D", "loading…", "fill history reloading after a bot restart");
+    return;
+  }
   if (d.error) { document.getElementById("dcards").innerHTML = card("Strategy D", "–", esc(d.error)); return; }
   document.getElementById("dentry").textContent = fmt(d.entry_gap, 2);
   document.getElementById("dexit").textContent = fmt(d.exit_gap, 2);
@@ -568,8 +624,8 @@ const ELIVE = SRC.replace("snapshot.json", "e.json");      // strategy E's live 
 let elive = null;
 let hist = [], initial = 100000;
 const SERIES = [
-  { key: "settle", name: "Value at settlement (pairs pay 1; C and D positions at cost)", color: "var(--s1)" },
-  { key: "fair", name: "Value with C and D positions at Kalshi fair", color: "var(--s3)" },
+  { key: "settle", name: "Value at settlement (pairs pay 1; C, D and E positions at cost)", color: "var(--s1)" },
+  { key: "fair", name: "Value with C, D and E positions at Kalshi fair", color: "var(--s3)" },
   { key: "mtm", name: "Mark-to-market (current prices)", color: "var(--s2)" },
 ];
 

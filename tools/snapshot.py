@@ -171,6 +171,11 @@ def build(c):
         "a_cap": getattr(config, "A_CAPITAL_CAP", None),
         "hard_reserve": getattr(config, "HARD_RESERVE", config.RESERVE),
         "cash_split": getattr(config, "CASH_SPLIT", None),   # share of the free cash each strategy may spend
+        "small_pot": getattr(config, "A_SMALL_POT", None),   # A's small-edge pot (after E's 10k)
+        "small_edge": getattr(config, "A_SMALL_EDGE", None),
+        "c_stopped": not getattr(config, "C_QUOTES", True),
+        "c_dump_gap": getattr(config, "C_DUMP_GAP", None), "c_dump_pair_gap": getattr(config, "C_DUMP_PAIR_GAP", None),
+        "d_frozen": getattr(config, "D_FROZEN", False),
         "extra_enabled": getattr(config, "EXTRA_CAPITAL_ENABLED", False),
         "extra_min_edge": getattr(config, "EXTRA_MIN_EDGE", None),
         "initial": t["initialBalance"],
@@ -621,10 +626,15 @@ def maker_view(c, tid, races, legs_of, quotes, b, cash):
     c_rows = {r["race"]: r for r in (b or {}).get("races", [])}
     spend = max(0.0, (cash - config.HARD_RESERVE) * (getattr(config, "CASH_SPLIT", {}) or {}).get("B", 1.0))
     out = []
+    fc = read_focus() if getattr(config, "A_TOP_N", None) else None
+    exit_mode = bool(fc and fc.get("exiting"))
+    others = [r for r in fc["focus"] if r != fc["exiting"]] if exit_mode else []
+    if exit_mode:                                    # focus rotation: B only sells the exit race (no bids)
+        held = [h for h in held if h[1] == fc["exiting"]]
     for pairs, race, no in held[:config.MAKER_RACES]:
         legs = legs_of[race]
         books = {x: noq(legs[x]) for x in "DR"}
-        cheapest = min((v for n, v in pair_ask.items() if n != race), default=None)
+        cheapest = min((v for n, v in pair_ask.items() if (n in others if exit_mode else n != race)), default=None)
         cr = c_rows.get(race, {})
         fav, room = "either", max(0.0, config.MAKER_OVER_CAP - abs(no.get("D", 0) - no.get("R", 0)))
         if cr.get("p_favourite") is not None and cr["p_favourite"] >= config.B_MIN_FAVOURITE:
@@ -633,12 +643,15 @@ def maker_view(c, tid, races, legs_of, quotes, b, cash):
             room = max(0.0, config.C_LIMIT + config.MAKER_OVER_CAP - exposure)
         bk = {x: {"bids": [(books[x]["bid"], 1)] if books[x]["bid"] is not None else [],
                   "asks": [(books[x]["ask"], 1)] if books[x]["ask"] is not None else []} for x in "DR"}
-        want = pair_maker.pair_quotes(bk, {"D": no.get("D", 0), "R": no.get("R", 0)}, cheapest, spend, fav, room)
+        want = (pair_maker.pair_quotes(bk, {"D": no.get("D", 0), "R": no.get("R", 0)}, cheapest, 0.0,
+                                       clip=config.MAKER_EXIT_CLIP, bids_on=False) if exit_mode else
+                pair_maker.pair_quotes(bk, {"D": no.get("D", 0), "R": no.get("R", 0)}, cheapest, spend, fav, room))
         ask_sum = None if None in (books["D"]["ask"], books["R"]["ask"]) else round(books["D"]["ask"] + books["R"]["ask"], 4)
         bid_sum = None if None in (books["D"]["bid"], books["R"]["bid"]) else round(books["D"]["bid"] + books["R"]["bid"], 4)
         out.append({"race": race, "pairs": pairs, "book": books, "ask_sum": ask_sum, "bid_sum": bid_sum,
                     "cheapest_other": cheapest, "quotes": want})
-    return {"races": out, "clip": config.MAKER_CLIP, "min_pairs": config.MAKER_MIN_PAIRS, "n_races": config.MAKER_RACES}
+    return {"races": out, "clip": config.MAKER_EXIT_CLIP if exit_mode else config.MAKER_CLIP, "min_pairs": config.MAKER_MIN_PAIRS,
+            "n_races": config.MAKER_RACES, "mode": "exit" if exit_mode else "make", "exiting": fc.get("exiting") if fc else None}
 
 
 def add_c_view(b, quotes, legs_of, cash):
