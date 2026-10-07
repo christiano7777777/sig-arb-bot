@@ -1415,6 +1415,15 @@ def _race_of_any(fake, ex):
     return "?"
 
 
+def test_startup_marks_held_races_for_our_leftover_quotes():
+    # 2026-10-07 16:52: quotes left by a killed run made A's leg fail (SelfTradePrevented) -> halt
+    fake = FakeClient({"Held race": SELLER_0990, "Other race": EDGE_01}, balance=50_000.5)
+    fake.held = held_pairs(fake, "Held race", 100)
+    r = make_runner(fake)
+    r.mark_possible_leftover_quotes()
+    assert r.b_resting == {fake.ex_of("Held race", "D"), fake.ex_of("Held race", "R")}   # not the race we do not hold
+
+
 if __name__ == "__main__":
     import contextlib
     import io

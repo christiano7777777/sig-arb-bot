@@ -111,6 +111,8 @@ class Runner:
             self.feed = Feed(SusqClient(), self.tour["id"])    # own client: the token mint is its only call
             self.feed.start()
         self.last_q = {}                              # SUSQ books of the last poll (price recorder)
+        if live:
+            self.mark_possible_leftover_quotes()
         if live and getattr(config, "KALSHI_BATCH_S", None):   # live runs only: tests never touch Kalshi
             PriceRecorder(self, STATE_DIR / "prices.jsonl").start()
 
@@ -262,6 +264,21 @@ class Runner:
                                             "race": label.split(":")[0], "ex": leg["exchangeId"], "ts": now_plus(0)}) + "\n")
         except Exception as e:                  # noqa: BLE001 - bookkeeping must never break trading
             print(f"  (order tag not recorded: {e})")
+
+    def mark_possible_leftover_quotes(self):
+        """A run that is cancelled is killed before its shutdown cancel, so B/C quotes it left (they rest
+        MAKER_LIFE_S) are still live but unknown to this run: 2026-10-07 16:52 they made A's MN-05 leg fail
+        with SelfTradePrevented and the bot halted. Every exchange of a race we hold is treated as possibly
+        quoted (b_resting), so A, D and E cancel our orders there before they trade."""
+        try:
+            held = self.positions()
+        except Exception as e:                  # noqa: BLE001 - start-up must not fail on this
+            print(f"  (could not read positions to mark leftover quotes: {e})")
+            return
+        ex = {e for b in self.baskets if any(held.get(x, {}).get("no") or held.get(x, {}).get("yes") for x in b.ex)
+              for e in b.ex}
+        self.b_resting |= ex
+        print(f"  {len(ex)} exchanges of held races marked: our own quotes from an earlier run are cancelled before trading there")
 
     def cancel_all(self, exchange_ids):
         for ex in exchange_ids:                 # cancel-all removes our quotes there too (state also in dry runs)
@@ -814,6 +831,9 @@ class Basket:
         the cheaper of buying the missing leg or selling the extra leg, per share, versus what the
         original order intended. Halts only if the book cannot absorb the fix after FIX_MAX_TRIES.
         base: the imbalance (leg 0 - leg 1) the race had before the order; restored, not zeroed."""
+        if self.r.live:                                 # our own resting quotes would block the fix (SelfTradePrevented)
+            self.r.cancel_all(self.ex)
+            self.r.b_resting -= set(self.ex)
         for attempt in range(1, config.FIX_MAX_TRIES + 1):
             d = held[0] - held[1] - base
             e = 0 if d > 0 else 1                       # leg with extra shares (relative to base)
