@@ -571,6 +571,9 @@ def strategy_e_block(c, tid, legs_of, ledger, fills):
     since = datetime.fromisoformat(config.E_LIVE_SINCE)
     hours = max(0.0, (datetime.now(timezone.utc) - since).total_seconds() / 3600)
     allot = min(config.E_CAPITAL, config.E_FILL_PER_HOUR * hours)
+    if getattr(config, "E_ALLOT_BASE", None) is not None:      # same rule as EExecutor.allotment
+        h2 = max(0.0, (datetime.now(timezone.utc) - datetime.fromisoformat(config.E_FILL_SINCE)).total_seconds() / 3600)
+        allot = min(config.E_CAPITAL, config.E_ALLOT_BASE + config.E_FILL_PER_HOUR * h2)
     flow = sum((-1 if f["side"] == "BUY" else 1) * f["qty"] * (f["price"] or 0) for f in fills)
     cost = d_cost_basis(fills)                       # same average-cost rule as D's
     race_of = {e: (race, x) for race, legs in legs_of.items() for x, e in legs.items()}
@@ -629,8 +632,8 @@ def maker_view(c, tid, races, legs_of, quotes, b, cash):
     fc = read_focus() if getattr(config, "A_TOP_N", None) else None
     exit_mode = bool(fc and fc.get("exiting"))
     others = [r for r in fc["focus"] if r != fc["exiting"]] if exit_mode else []
-    if exit_mode:                                    # focus rotation: B only sells the exit race (no bids)
-        held = [h for h in held if h[1] == fc["exiting"]]
+    if exit_mode:                                    # focus rotation: asks on the exit race, bids on the other focus races
+        held = [h for h in held if h[1] == fc["exiting"] or (getattr(config, "MAKER_FOCUS_BIDS", False) and h[1] in others)]
     for pairs, race, no in held[:config.MAKER_RACES]:
         legs = legs_of[race]
         books = {x: noq(legs[x]) for x in "DR"}
@@ -644,7 +647,9 @@ def maker_view(c, tid, races, legs_of, quotes, b, cash):
         bk = {x: {"bids": [(books[x]["bid"], 1)] if books[x]["bid"] is not None else [],
                   "asks": [(books[x]["ask"], 1)] if books[x]["ask"] is not None else []} for x in "DR"}
         want = (pair_maker.pair_quotes(bk, {"D": no.get("D", 0), "R": no.get("R", 0)}, cheapest, 0.0,
-                                       clip=config.MAKER_EXIT_CLIP, bids_on=False) if exit_mode else
+                                       clip=config.MAKER_EXIT_CLIP, bids_on=False) if exit_mode and race == fc["exiting"] else
+                pair_maker.pair_quotes(bk, {"D": no.get("D", 0), "R": no.get("R", 0)}, None, spend,
+                                       clip=config.MAKER_EXIT_CLIP) if exit_mode else
                 pair_maker.pair_quotes(bk, {"D": no.get("D", 0), "R": no.get("R", 0)}, cheapest, spend, fav, room))
         ask_sum = None if None in (books["D"]["ask"], books["R"]["ask"]) else round(books["D"]["ask"] + books["R"]["ask"], 4)
         bid_sum = None if None in (books["D"]["bid"], books["R"]["bid"]) else round(books["D"]["bid"] + books["R"]["bid"], 4)

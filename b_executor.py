@@ -220,19 +220,29 @@ class BExecutor:
         return want
 
     def exit_quotes(self, q, active):
-        """Focus rotation (user, 2026-10-08): asks on both legs of the exit race only, MAKER_EXIT_CLIP pairs, and
-        only while its ask sum >= the cheapest pair in the other focus races + ROTATE_MIN_GAIN. No bids."""
+        """Focus rotation (user, 2026-10-08): asks on both legs of the exit race, MAKER_EXIT_CLIP pairs, only while
+        its ask sum >= the cheapest pair in the other focus races + ROTATE_MIN_GAIN; pair bids on the other focus
+        races (MAKER_FOCUS_BIDS)."""
         exiting, want = getattr(self.r, "exiting", None), {}
         if exiting is None:
             return want
         others = [b for b in self.r.baskets if b.name in self.r.a_top and b.name != exiting
                   and all(q.get(e, {}).get("bestBid") is not None for e in b.ex)]
         cheapest = min((sum(1 - q[e]["bestBid"] for e in b.ex) for b in others), default=None)
+        spend = self.r.strategy_budget("B")
         for b, ex, h in active:
-            if b.name != exiting:
-                continue
             books = {x: self.top_book(q, ex[x]) for x in "DR"}
-            for o in pair_maker.pair_quotes(books, h, cheapest, 0.0, clip=config.MAKER_EXIT_CLIP, bids_on=False):
+            if b.name == exiting:                   # asks only
+                quotes = pair_maker.pair_quotes(books, h, cheapest, 0.0, clip=config.MAKER_EXIT_CLIP, bids_on=False)
+            elif getattr(config, "MAKER_FOCUS_BIDS", False) and b.name in self.r.a_top:
+                # user, 2026-10-08: pair bids on the other focus races (no asks: cheapest None), within B's cash,
+                # bid sum <= 1 - MIN_EDGE and never while the legs are MAKER_OVER_CAP apart (pair_maker)
+                quotes = pair_maker.pair_quotes(books, h, None, spend, clip=config.MAKER_EXIT_CLIP)
+            else:
+                continue
+            for o in quotes:
+                if o["side"] == "buy":
+                    spend -= o["qty"] * o["price"]
                 want[(ex[o["leg"]], o["side"])] = (b, {**o, "kind": "maker", "edge_vs_fair": 0.0})
         return want
 

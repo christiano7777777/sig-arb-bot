@@ -88,6 +88,7 @@ def make_runner(fake, min_edge=0.005, exposure=None, capital=50_000, reserve=50_
     config.A_SMALL_PER_HOUR, config.A_SMALL_PROTECT = 300, True
     config.A_TOP_N, config.C_QUOTES, config.D_FROZEN = None, True, False
     config.A_SMALL_POT, config.C_DUMP_PAIR_GAP, config.MAKER_EXIT_CLIP, config.INTAKE_SHORTLIST = None, None, 2_000, 5
+    config.MAKER_FOCUS_BIDS, config.E_ALLOT_BASE = False, None
     config.D_PAUSE_UNTIL_A_SMALL = None
     config.C_LIMIT, config.C_SKEW, config.C_SKEW_MAX, config.C_QUOTE_EDGE, config.C_CLIP = 2_000, 0.10, 0.25, 0.02, 500
     config.C_EXTRA_RACES = 5
@@ -1559,6 +1560,34 @@ def test_pot_swaps_into_a_cheaper_small_edge_pair():
     sells = [_race_of_any(fake, b["legs"][0]["exchangeId"]) for _, b in r.sent if b["legs"][0]["action"] == "sell"]
     buys = [_race_of_any(fake, b["legs"][0]["exchangeId"]) for _, b in r.sent if b["legs"][0]["action"] == "buy"]
     assert sells and set(sells) == {"Pot race"} and set(buys) <= {"Tiny race"}   # 0.995 bids fund a 0.99 pair
+
+
+def test_maker_bids_on_the_other_focus_races_and_asks_only_on_the_exit_race():
+    fake = FakeClient({"Delaware Senate": DE, "Other race": CHEAP_096}, balance=1_000 + 5_000)
+    config.B_RACES = {"Delaware Senate": {"event": "SENATEDE-26", "D": "SENATEDE-26-D", "R": "SENATEDE-26-R"},
+                      "Other race": {"event": "X", "D": "X-D", "R": "X-R"}}
+    r = make_runner(fake, b_enabled=True)
+    config.MAKER_FOCUS_BIDS, config.MAKER_OVER_CAP, config.MIN_EDGE = True, 500, 0.005
+    r.a_top, r.exiting = {"Delaware Senate", "Other race"}, "Other race"
+    b = next(x for x in r.baskets if x.name == "Delaware Senate")
+    ex = {"D": fake.ex_of("Delaware Senate", "D"), "R": fake.ex_of("Delaware Senate", "R")}
+    want = r.b.exit_quotes(r.quotes(), [(b, ex, {"D": 10_000, "R": 10_000})])
+    sides = sorted((k[1], o["price"]) for k, (_, o) in want.items())
+    assert sides == [("buy", 0.12), ("buy", 0.84)]               # Delaware is not exiting: bids at the best bids only
+    qty = next(o["qty"] for _, o in want.values())
+    assert qty * (0.12 + 0.84) <= r.strategy_budget("B") + 1e-6 and qty <= 2_000
+    assert not [o for o in r.b.exit_quotes(r.quotes(), [(b, ex, {"D": 10_600, "R": 10_000})]).values()]   # 600 apart
+
+
+def test_e_allotment_base_then_refill():
+    import e_executor
+    config.E_CAPITAL, config.E_ALLOT_BASE, config.E_FILL_PER_HOUR = 10_000, 3_000, 150
+    config.E_FILL_SINCE = (datetime.now(timezone.utc) - __import__("datetime").timedelta(hours=10)).isoformat()
+    e = e_executor.EExecutor.__new__(e_executor.EExecutor)
+    assert abs(e.allotment() - 4_500) < 1                        # 3,000 + 150 x 10 h
+    config.E_FILL_SINCE = (datetime.now(timezone.utc) - __import__("datetime").timedelta(hours=100)).isoformat()
+    assert e.allotment() == 10_000
+    config.E_ALLOT_BASE = None
 
 
 if __name__ == "__main__":

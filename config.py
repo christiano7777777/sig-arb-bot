@@ -94,6 +94,7 @@ A_TOP_N = 3                  # None = all races
 A_SMALL_POT = 10_000         # after E's 10k: A's small-edge pot (edge <= A_SMALL_EDGE, outside the focus) up to this at cost
 INTAKE_SHORTLIST = 5         # races (best top-of-book edge) whose books are read to pick the next focus race
 MAKER_EXIT_CLIP = 2_000      # B's ask size per leg on the exit race (user: bigger clips)
+MAKER_FOCUS_BIDS = True      # user, 2026-10-08: B also rests pair bids (best bids, up to MAKER_EXIT_CLIP) on the other focus races
 A_SMALL_PROTECT = True
 # D paused for A (user, 2026-10-07): while A's small-edge bucket is below this share of A's pairs at cost,
 # D's CASH_SPLIT share goes to A. D still exits and buys missing hedges (those draw on all free cash), but
@@ -159,7 +160,9 @@ D_LIVE_SINCE = "2026-10-04T13:30:00+00:00"   # D's fills counted from here (ledg
 E_ENABLED = True
 E_LIVE_SINCE = "2026-10-07T15:29:00+00:00"   # E's allotment grows from here; E's fills counted from here
 E_CAPITAL = 10_000           # user: 10k, no other risk limit
-E_FILL_PER_HOUR = 1e9        # user, 2026-10-08: full 10k now (first claim on free cash, e.g. C's sale proceeds); was 500/h
+E_FILL_PER_HOUR = 150        # user, 2026-10-08 18:00: refill 150/h toward E_CAPITAL (was 1e9 = full 10k, 500/h before)
+E_ALLOT_BASE = 3_000         # user, 2026-10-08 18:00: E's reserve 3k now (was 10k: 6.6k idle while E had no signal)
+E_FILL_SINCE = "2026-10-07T18:01:00+00:00"   # allotment = min(E_CAPITAL, E_ALLOT_BASE + E_FILL_PER_HOUR x hours since this)
 E_INTERVAL_S = 10            # one E round per Kalshi batch refresh
 E_JUMP = 0.03                # Kalshi fair of a leg (NO price) up at least this ...
 E_JUMP_WINDOW_S = 60         # ... within this long

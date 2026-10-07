@@ -69,6 +69,10 @@ class EExecutor:
         print(f"  E: ledger rebuilt from {len(e_orders)} tagged orders: {self.ledger}, cash flow {flow:,.2f}")
 
     def allotment(self):
+        base = getattr(config, "E_ALLOT_BASE", None)
+        if base is not None:                        # 2026-10-08: a base now, then E_FILL_PER_HOUR from E_FILL_SINCE
+            hours = max(0.0, (time.time() - datetime.fromisoformat(config.E_FILL_SINCE).timestamp()) / 3600)
+            return min(config.E_CAPITAL, base + config.E_FILL_PER_HOUR * hours)
         hours = max(0.0, (time.time() - self.since) / 3600)
         return min(config.E_CAPITAL, config.E_FILL_PER_HOUR * hours)
 
