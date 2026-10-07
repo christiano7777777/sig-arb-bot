@@ -88,7 +88,7 @@ def make_runner(fake, min_edge=0.005, exposure=None, capital=50_000, reserve=50_
     config.A_SMALL_PER_HOUR, config.A_SMALL_PROTECT = 300, True
     config.A_TOP_N, config.C_QUOTES, config.D_FROZEN = None, True, False
     config.A_SMALL_POT, config.C_DUMP_PAIR_GAP, config.MAKER_EXIT_CLIP, config.INTAKE_SHORTLIST = None, None, 2_000, 5
-    config.MAKER_FOCUS_BIDS, config.E_ALLOT_BASE = False, None
+    config.MAKER_FOCUS_BIDS, config.E_ALLOT_BASE, config.A_NONFOCUS_MAX_EDGE = False, None, None
     config.D_PAUSE_UNTIL_A_SMALL = None
     config.C_LIMIT, config.C_SKEW, config.C_SKEW_MAX, config.C_QUOTE_EDGE, config.C_CLIP = 2_000, 0.10, 0.25, 0.02, 500
     config.C_EXTRA_RACES = 5
@@ -1540,11 +1540,11 @@ def _pot_rot_runner():
     return fake, r
 
 
-def test_pot_entry_is_funded_only_by_other_pot_races():
+def test_non_big3_entry_is_funded_only_by_other_non_big3_races():
     fake, r = _pot_rot_runner()
     tiny = next(b for b in r.baskets if b.name == "Tiny race")
     names = {a.name for _, a in r.sellers(r.quotes(), r.positions(), tiny, 0.0)}
-    assert names == {"Pot race"}                            # not F1-F3 (focus), not Held race (cost 0.94)
+    assert names == {"Pot race", "Held race"}               # every non-big-3 race (user, 2026-10-08), never F1-F3
 
 
 def test_focus_entry_is_never_funded_by_pot_or_held_races():
@@ -1559,7 +1559,7 @@ def test_pot_swaps_into_a_cheaper_small_edge_pair():
     r.poll()
     sells = [_race_of_any(fake, b["legs"][0]["exchangeId"]) for _, b in r.sent if b["legs"][0]["action"] == "sell"]
     buys = [_race_of_any(fake, b["legs"][0]["exchangeId"]) for _, b in r.sent if b["legs"][0]["action"] == "buy"]
-    assert sells and set(sells) == {"Pot race"} and set(buys) <= {"Tiny race"}   # 0.995 bids fund a 0.99 pair
+    assert sells and set(sells) <= {"Pot race", "Held race"} and set(buys) <= {"Tiny race"}   # 0.995 bids fund 0.99
 
 
 def test_maker_bids_on_the_other_focus_races_and_asks_only_on_the_exit_race():
@@ -1588,6 +1588,24 @@ def test_e_allotment_base_then_refill():
     config.E_FILL_SINCE = (datetime.now(timezone.utc) - __import__("datetime").timedelta(hours=100)).isoformat()
     assert e.allotment() == 10_000
     config.E_ALLOT_BASE = None
+
+
+# EDGE_04: NO asks 0.5 + 0.46 = 0.96 (edge 0.04, above the 0.03 cap: an illiquid-looking big edge)
+EDGE_04 = {"D": ([(0.5, DEEP)], [(0.99, 5)]), "R": ([(0.54, DEEP)], [(0.99, 5)])}
+
+
+def test_non_big3_cash_buys_highest_edge_up_to_the_cap_only():
+    races = {"F1 race": ROT_F1, "F2 race": NO_EDGE, "F3 race": EDGE_02, "Big edge race": EDGE_04,
+             "Mid race": EDGE_02, "Tiny race": EDGE_01}
+    fake = FakeClient(races, balance=1_000 + 600)
+    fake.held = {}
+    for name, n in (("F1 race", 3_000), ("F2 race", 5_000), ("F3 race", 4_000)):
+        fake.held.update({fake.ex_of(name, "D"): (-n, 0.47 * n), fake.ex_of(name, "R"): (-n, 0.47 * n)})
+    r = make_runner(fake, reserve=1_000)
+    config.A_TOP_N, config.A_SMALL_POT, config.A_NONFOCUS_MAX_EDGE = 3, 10_000, 0.03
+    r.poll()
+    got = _bought(fake, r)
+    assert got and got[0] == "Mid race" and "Big edge race" not in got and "F3 race" not in got
 
 
 if __name__ == "__main__":

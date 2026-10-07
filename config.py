@@ -91,7 +91,8 @@ A_SMALL_PER_HOUR = 300
 A_TOP_N = 3                  # None = all races
 # Focus rotation (user, 2026-10-08): the focus is A_TOP_N races saved in state/focus.json; B sells the exit race
 # (smallest current edge) until it is gone, then one race with the largest total edge on its book is taken in.
-A_SMALL_POT = 10_000         # after E's 10k: A's small-edge pot (edge <= A_SMALL_EDGE, outside the focus) up to this at cost
+A_SMALL_POT = 10_000         # after E's reserve: A's non-big-3 pairs (all races outside the focus) up to this at cost
+A_NONFOCUS_MAX_EDGE = 0.03   # user, 2026-10-08: non-big-3 swaps and cash buys only into edges <= this (bigger = illiquid)
 INTAKE_SHORTLIST = 5         # races (best top-of-book edge) whose books are read to pick the next focus race
 MAKER_EXIT_CLIP = 2_000      # B's ask size per leg on the exit race (user: bigger clips)
 MAKER_FOCUS_BIDS = True      # user, 2026-10-08: B also rests pair bids (best bids, up to MAKER_EXIT_CLIP) on the other focus races

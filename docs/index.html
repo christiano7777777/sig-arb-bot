@@ -403,9 +403,8 @@ function render(d) {
 
   // focus rotation (2026-10-08): focus races (A buys), the one B is selling, the small-edge pot, the rest held
   const f = d.focus;
-  const role = r => !f ? "" : r.race === f.exiting ? "B exiting" : (f.focus || []).includes(r.race) ? "focus"
-    : r.avg_cost >= 0.99 - 1e-9 ? "small-edge pot" : "hold to settlement or sell at 1";
-  const roleRank = { "B exiting": 0, "focus": 1, "small-edge pot": 2, "hold to settlement or sell at 1": 3, "": 4 };
+  const role = r => !f ? "" : r.race === f.exiting ? "B exiting" : (f.focus || []).includes(r.race) ? "big 3" : "non-big-3 (rotates)";
+  const roleRank = { "B exiting": 0, "big 3": 1, "non-big-3 (rotates)": 2, "": 3 };
   document.getElementById("rows").innerHTML = d.rows.filter(r => r.pairs > 0)
     .sort((a, b) => roleRank[role(a)] - roleRank[role(b)] || b.pairs - a.pairs).map(r => {
     const e = r.current_edge;
@@ -481,19 +480,20 @@ function renderRotation(d) {
   if (!f) return;
   const rows = d.rows.filter(r => r.pairs > 0);
   const ex = rows.find(r => r.race === f.exiting);
-  const pot = rows.filter(r => !(f.focus || []).includes(r.race) && r.avg_cost >= 0.99 - 1e-9)
-    .reduce((s, r) => s + r.pairs * r.avg_cost, 0);
+  const pot = rows.filter(r => !(f.focus || []).includes(r.race)).reduce((s, r) => s + r.pairs * r.avg_cost, 0);
   const e = d.e || {};
   document.getElementById("aintro").innerHTML = `<span class="badge ba">A</span> Buys one NO share of each party (pays ≥ 1
-    whoever wins) below 1, in the focus races only (not the one B is selling), plus small edges (≤ ${fmt(d.small_edge, 2)}) outside
-    them for the small-edge pot. New cash: E's 10k first, then the ${fmt(d.small_pot, 0)} pot, then the focus races. Races outside
-    the focus are held to settlement or sold at 1 (plain exits); they never fund swaps. No directional risk.`;
+    whoever wins) below 1, in two separate groups. Big 3 (the focus): A buys there except in the race B is selling, and they
+    swap only among themselves. Non-big-3: every other race; A buys and swaps there only into edges ≤ ${fmt(d.small_edge, 2)}
+    (bigger edges tend to be illiquid), highest edge first, selling the non-big-3 pair with the highest bid sum to fund a
+    swap; up to ${fmt(d.small_pot, 0)} at cost. New cash: E's reserve first, then non-big-3 up to the cap, then the big 3.
+    The two groups never fund each other. Plain exits (bids ≥ 1) everywhere. No directional risk.`;
   document.getElementById("rotcards").innerHTML =
     card("Focus races", (f.focus || []).length, (f.focus || []).map(esc).join(" · ")) +
     card("B exiting", f.exiting ? esc(f.exiting) : "–", ex ? `${fmt(ex.pairs, 0)} pairs left · bid sum ${fmt(ex.sell_sum, 3)} · ask sum ${fmt(ex.buy_sum, 3)}`
          : f.exiting ? "no pairs left: next race comes in" : "chosen once 3 races are in focus") +
     card("Newest in focus", f.newest ? esc(f.newest) : "–", f.newest ? "not chosen as the next exit" : "none taken in yet") +
-    card("Cash order", `E ${fmt(e.cash, 0)}`, `E's own cash (10k first) · then pot ${fmt(pot, 0)} of ${fmt(d.small_pot, 0)} · then focus`);
+    card("Cash order", `E ${fmt(e.cash, 0)}`, `E's reserve first · then non-big-3 ${fmt(pot, 0)} of ${fmt(d.small_pot, 0)} · then big 3`);
   document.getElementById("rotlog").innerHTML = (f.log || []).slice().reverse().map(x =>
     `<tr><td>${new Date(x.t).toLocaleString()}</td><td>${esc(x.what)}</td></tr>`).join("");
 }

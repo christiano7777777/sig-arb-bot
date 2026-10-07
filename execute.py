@@ -307,9 +307,9 @@ class Runner:
         self.last_q = q                           # the price recorder logs the SUSQ books we saw
         held = self.positions(fresh=False)
         self._a_cost = None                       # A's holdings at cost, computed once per poll when needed
+        self.focus_update(held, q)
         small_cost, a_cost = self.a_small_bucket(held)
         self._d_paused = self.d_paused(small_cost, a_cost)
-        self.focus_update(held, q)
         if self.b is not None:      # strategies B and C first: their buys are worth more than an arb entry
             self.b.step(q, held)
         if self.d is not None:      # strategy D: Senate-control stat arb (own ledger)
@@ -329,13 +329,14 @@ class Runner:
         if self.a_top is not None:   # focus: A buys in the focus races except the exit race; small edges outside
             pot_on = bool(getattr(config, "A_SMALL_POT", None))   # the focus only for the small-edge pot
             entries = [t for t in entries if (t[1].name in self.a_top and t[1].name != self.exiting)
-                       or (pot_on and t[1].name not in self.a_top and t[0] <= config.A_SMALL_EDGE + 1e-9)]
+                       or (pot_on and t[1].name not in self.a_top and t[0] <= self.pot_edge_cap() + 1e-9)]
         entries.sort(key=lambda t: -t[0])                            # higher edge first
         exits = [b for _, b in sorted(exits, key=lambda t: -t[0])]  # best sell price first
         allow = self.a_small_allowance(small_cost, a_cost)
         if allow > 0:   # paced small edges get first claim on A's cash, up to the allowance (A_SMALL_PER_HOUR)
-            entries = ([t for t in entries if t[0] <= config.A_SMALL_EDGE + 1e-9]
-                       + [t for t in entries if t[0] > config.A_SMALL_EDGE + 1e-9])
+            pot_first = (lambda t: t[1].name not in self.a_top) if self.a_top is not None else \
+                (lambda t: t[0] <= config.A_SMALL_EDGE + 1e-9)
+            entries = [t for t in entries if pot_first(t)] + [t for t in entries if not pot_first(t)]
         print(f"{time.strftime('%H:%M:%S')}  {len(self.baskets)} races: "
               f"{len(entries)} entry signal(s) {[f'{b.name} {e:.3f}' for e, b in entries]}, "
               f"{len(exits)} exit signal(s) {[b.name for b in exits]}"
@@ -362,7 +363,7 @@ class Runner:
             if tried >= config.MAX_ENTRIES_PER_POLL:
                 break
             pot_on = bool(getattr(config, "A_SMALL_POT", None))
-            small = ((config.A_SMALL_FRAC or pot_on) and edge <= config.A_SMALL_EDGE + 1e-9
+            small = ((config.A_SMALL_FRAC or pot_on) and edge <= self.pot_edge_cap() + 1e-9
                      and (self.a_top is None or b.name not in self.a_top))
             if (not small and pot_on and self.a_top is not None and self.a_small_allowance(
                     *self.a_small_bucket(self._pos if self._pos is not None else held)) >= config.ROTATE_TRIGGER_CASH):
@@ -463,6 +464,7 @@ class Runner:
         """(small, total): A's pairs at cost in races whose average pair cost is >= 1 - A_SMALL_EDGE, and in all
         races (same pairs as a_holdings_cost). A race is in the bucket or not as a whole (average of its lots)."""
         held = held if held is not None else self.positions(fresh=False)
+        top = getattr(self, "a_top", None)              # focus rotation: the pot is every race outside the focus
         small = total = 0.0
         for b in self.baskets:
             legs = [held.get(e) for e in b.ex]
@@ -472,7 +474,7 @@ class Runner:
             if pairs > 0:
                 per_pair = sum(l["cost"] / max(l.get("raw_no", l["no"]), 1e-9) for l in legs)
                 total += pairs * per_pair
-                if per_pair >= 1.0 - config.A_SMALL_EDGE - 1e-9:
+                if (b.name not in top) if top is not None else per_pair >= 1.0 - config.A_SMALL_EDGE - 1e-9:
                     small += pairs * per_pair
         return small, total
 
@@ -633,6 +635,11 @@ class Runner:
         return not (edge is not None and edge >= config.EXTRA_MIN_EDGE - 1e-9
                     and self.extra_room() >= config.ROTATE_TRIGGER_CASH)
 
+    @staticmethod
+    def pot_edge_cap():
+        """Largest edge a non-big-3 entry or swap target may have (A_NONFOCUS_MAX_EDGE; else A_SMALL_EDGE)."""
+        return getattr(config, "A_NONFOCUS_MAX_EDGE", None) or config.A_SMALL_EDGE
+
     def is_small_race(self, held, a):
         """A's pairs in race a cost >= 1 - A_SMALL_EDGE on average (the small-edge pot)."""
         legs = [held.get(e) for e in a.ex]
@@ -653,8 +660,8 @@ class Runner:
             pairs = min(held.get(e, {}).get("no", 0.0) for e in a.ex)
             asks = [q.get(e, {}).get("bestAsk") for e in a.ex]
             if top is not None:
-                if pot_entry and (a.name in top or not self.is_small_race(held, a)):
-                    continue                        # pot entry: only other small-edge pot races fund it
+                if pot_entry and a.name in top:
+                    continue                        # non-big-3 entry: only other non-big-3 races fund it
                 if not pot_entry and a.name not in top:
                     continue                        # focus entry: only focus races (pot and held races never)
             elif pairs >= 1 and getattr(config, "A_SMALL_PROTECT", False) and getattr(config, "A_SMALL_FRAC", None):

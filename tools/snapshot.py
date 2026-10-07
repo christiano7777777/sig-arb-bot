@@ -172,7 +172,7 @@ def build(c):
         "hard_reserve": getattr(config, "HARD_RESERVE", config.RESERVE),
         "cash_split": getattr(config, "CASH_SPLIT", None),   # share of the free cash each strategy may spend
         "small_pot": getattr(config, "A_SMALL_POT", None),   # A's small-edge pot (after E's 10k)
-        "small_edge": getattr(config, "A_SMALL_EDGE", None),
+        "small_edge": getattr(config, "A_NONFOCUS_MAX_EDGE", None) or getattr(config, "A_SMALL_EDGE", None),
         "c_stopped": not getattr(config, "C_QUOTES", True),
         "c_dump_gap": getattr(config, "C_DUMP_GAP", None), "c_dump_pair_gap": getattr(config, "C_DUMP_PAIR_GAP", None),
         "d_frozen": getattr(config, "D_FROZEN", False),
