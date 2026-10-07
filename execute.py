@@ -372,7 +372,9 @@ class Runner:
                 # paced: at most the allowance (orders re-read positions into self._pos, spend is logged)
                 allow = self.a_small_allowance(*self.a_small_bucket(self._pos if self._pos is not None else held))
                 if allow < config.ROTATE_TRIGGER_CASH:
-                    continue                                         # allowance used up: skip, not a swap target
+                    if pot_on and self.a_top is not None:
+                        blocked.append(b)                            # pot full / no cash: rotate within the pot (swap only)
+                    continue                                         # allowance used up: no cash buy
             self._a_room_cap = allow if small else None
             try:
                 if self.out_of_budget(self.top_edge(q, b)):    # out of budget: no book reads needed
@@ -631,17 +633,31 @@ class Runner:
         return not (edge is not None and edge >= config.EXTRA_MIN_EDGE - 1e-9
                     and self.extra_room() >= config.ROTATE_TRIGGER_CASH)
 
+    def is_small_race(self, held, a):
+        """A's pairs in race a cost >= 1 - A_SMALL_EDGE on average (the small-edge pot)."""
+        legs = [held.get(e) for e in a.ex]
+        if None in legs or min(l["no"] for l in legs) < 1:
+            return False
+        return sum(l["cost"] / max(l.get("raw_no", l["no"]), 1e-9) for l in legs) >= 1.0 - config.A_SMALL_EDGE - 1e-9
+
     def sellers(self, q, held, b, floor):
-        """Held races (other than b) whose best NO bids sum to >= floor, from the bulk quotes."""
+        """Held races (other than b) whose best NO bids sum to >= floor, from the bulk quotes.
+        Focus rotation: a focus race is funded only by focus races; a small-edge pot entry (outside the focus) only
+        by other pot races (user, 2026-10-08: small edges rotate among themselves); held races are never sold."""
         out = []
+        top = getattr(self, "a_top", None)
+        pot_entry = top is not None and b.name not in top
         for a in self.baskets:
             if a is b:
                 continue
             pairs = min(held.get(e, {}).get("no", 0.0) for e in a.ex)
             asks = [q.get(e, {}).get("bestAsk") for e in a.ex]
-            if getattr(self, "a_top", None) is not None and a.name not in self.a_top:
-                continue                            # outside the top N: sold only by plain exits (A_TOP_N)
-            if pairs >= 1 and getattr(config, "A_SMALL_PROTECT", False) and getattr(config, "A_SMALL_FRAC", None):
+            if top is not None:
+                if pot_entry and (a.name in top or not self.is_small_race(held, a)):
+                    continue                        # pot entry: only other small-edge pot races fund it
+                if not pot_entry and a.name not in top:
+                    continue                        # focus entry: only focus races (pot and held races never)
+            elif pairs >= 1 and getattr(config, "A_SMALL_PROTECT", False) and getattr(config, "A_SMALL_FRAC", None):
                 legs = [held[e] for e in a.ex]
                 if sum(l["cost"] / max(l.get("raw_no", l["no"]), 1e-9) for l in legs) >= 1.0 - config.A_SMALL_EDGE - 1e-9:
                     continue                        # small-edge pairs are not sold to fund swaps (A_SMALL_PROTECT)

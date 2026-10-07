@@ -1522,6 +1522,45 @@ def test_rotation_state_restored_after_restart_is_written_back_at_once():
     assert back["exiting"] == "F2 race" and "restored" in back["log"][-1]["what"]
 
 
+# ---- small-edge pot rotates only within itself (user, 2026-10-08) ------------------------------------------
+def _pot_rot_runner():
+    # focus F1-F3 (deep, cost 0.94); "Pot race" held at cost 0.99 bids 0.995 (small-edge pot, outside the focus);
+    # "Tiny race" offers a new small-edge pair at 0.99; "Held race" (cost 0.94) is outside the focus, not small
+    races = {"F1 race": ROT_F1, "F2 race": NO_EDGE, "F3 race": EDGE_02, "Pot race": SELLER_0995,
+             "Tiny race": EDGE_01, "Held race": SELLER_0995}
+    fake = FakeClient(races, balance=50_000.5)             # no cash above the reserve: swaps only
+    fake.held = {}
+    for name, n, c in (("F1 race", 3_000, 0.47), ("F2 race", 5_000, 0.47), ("F3 race", 4_000, 0.47),
+                       ("Pot race", 400, 0.495), ("Held race", 300, 0.47)):
+        fake.held.update({fake.ex_of(name, "D"): (-n, c * n), fake.ex_of(name, "R"): (-n, c * n)})
+    r = make_runner(fake)
+    config.A_TOP_N, config.A_SMALL_POT = 3, 10_000
+    r.focus_update(r.positions(), r.quotes())
+    return fake, r
+
+
+def test_pot_entry_is_funded_only_by_other_pot_races():
+    fake, r = _pot_rot_runner()
+    tiny = next(b for b in r.baskets if b.name == "Tiny race")
+    names = {a.name for _, a in r.sellers(r.quotes(), r.positions(), tiny, 0.0)}
+    assert names == {"Pot race"}                            # not F1-F3 (focus), not Held race (cost 0.94)
+
+
+def test_focus_entry_is_never_funded_by_pot_or_held_races():
+    fake, r = _pot_rot_runner()
+    f3 = next(b for b in r.baskets if b.name == "F3 race")
+    names = {a.name for _, a in r.sellers(r.quotes(), r.positions(), f3, 0.0)}
+    assert names <= {"F1 race", "F2 race"} and "Pot race" not in names and "Held race" not in names
+
+
+def test_pot_swaps_into_a_cheaper_small_edge_pair():
+    fake, r = _pot_rot_runner()
+    r.poll()
+    sells = [_race_of_any(fake, b["legs"][0]["exchangeId"]) for _, b in r.sent if b["legs"][0]["action"] == "sell"]
+    buys = [_race_of_any(fake, b["legs"][0]["exchangeId"]) for _, b in r.sent if b["legs"][0]["action"] == "buy"]
+    assert sells and set(sells) == {"Pot race"} and set(buys) <= {"Tiny race"}   # 0.995 bids fund a 0.99 pair
+
+
 if __name__ == "__main__":
     import contextlib
     import io
