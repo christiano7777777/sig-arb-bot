@@ -100,6 +100,7 @@ class Runner:
         self._swaps = []                              # times of recent swap attempts (ROTATE_MAX_PER_MIN)
         self._a_room_cap = None                       # cap on A's cash room while the small-edge bucket refills
         self._d_paused = False                        # D's cash share goes to A (D_PAUSE_UNTIL_A_SMALL)
+        self._small_spent = []                        # (time, cost) of small-edge buys (A_SMALL_PER_HOUR)
         if getattr(config, "REALTIME_ENABLED", False):
             self.feed = Feed(SusqClient(), self.tour["id"])    # own client: the token mint is its only call
             self.feed.start()
@@ -286,14 +287,14 @@ class Runner:
                 exits.append((sum(1 - x for x in asks), b))
         entries.sort(key=lambda t: -t[0])                            # higher edge first
         exits = [b for _, b in sorted(exits, key=lambda t: -t[0])]  # best sell price first
-        short = self.a_small_shortfall(small_cost, a_cost)
-        if short > 0:   # bucket below target: small-edge entries first, the rest swap-only (A_SMALL_FRAC)
+        allow = self.a_small_allowance(small_cost, a_cost)
+        if allow > 0:   # paced small edges get first claim on A's cash, up to the allowance (A_SMALL_PER_HOUR)
             entries = ([t for t in entries if t[0] <= config.A_SMALL_EDGE + 1e-9]
                        + [t for t in entries if t[0] > config.A_SMALL_EDGE + 1e-9])
         print(f"{time.strftime('%H:%M:%S')}  {len(self.baskets)} races: "
               f"{len(entries)} entry signal(s) {[f'{b.name} {e:.3f}' for e, b in entries]}, "
               f"{len(exits)} exit signal(s) {[b.name for b in exits]}"
-              + (f", small-edge bucket {small_cost / a_cost:.1%} of A (short {short:.0f})" if a_cost > 0 else "")
+              + (f", small-edge {small_cost / a_cost:.1%} of A, allowance {allow:.0f}" if a_cost > 0 and config.A_SMALL_FRAC else "")
               + (", D paused (its cash share goes to A)" if self._d_paused else ""))
         # 1) every exit, best price first: exits are never delayed by entry work
         for b in exits:
@@ -313,21 +314,24 @@ class Runner:
                 continue
             if tried >= config.MAX_ENTRIES_PER_POLL:
                 break
-            # small-edge bucket below target: cash only for small-edge entries, at most the shortfall
-            # (orders re-read positions into self._pos, so several entries in one poll cannot overshoot it)
-            short = self.a_small_shortfall(*self.a_small_bucket(self._pos if self._pos is not None else held))
-            if short > 0 and edge > config.A_SMALL_EDGE + 1e-9:
-                blocked.append(b)                                    # bigger edges: swaps only
-                continue
-            self._a_room_cap = short if short > 0 else None
+            small = config.A_SMALL_FRAC and edge <= config.A_SMALL_EDGE + 1e-9
+            if small:
+                # paced: at most the allowance (orders re-read positions into self._pos, spend is logged)
+                allow = self.a_small_allowance(*self.a_small_bucket(self._pos if self._pos is not None else held))
+                if allow < config.ROTATE_TRIGGER_CASH:
+                    continue                                         # allowance used up: skip, not a swap target
+            self._a_room_cap = allow if small else None
             try:
                 if self.out_of_budget(self.top_edge(q, b)):    # out of budget: no book reads needed
                     blocked.append(b)
                     continue
                 tried += 1
+                b.last_buy_cost = 0.0
                 b.try_once()
             finally:
                 self._a_room_cap = None
+            if small and b.last_buy_cost > 0:
+                self._small_spent.append((time.time(), b.last_buy_cost))
             if b.cash_blocked:
                 blocked.append(b)
         if blocked:
@@ -422,6 +426,17 @@ class Runner:
         frac = getattr(config, "D_PAUSE_UNTIL_A_SMALL", None)
         return bool(frac) and self.d is not None and total > 0 and small < frac * total - 1e-9
 
+    def a_small_allowance(self, small, total):
+        """Cash small-edge entries may still use now: the rest of this rolling hour's A_SMALL_PER_HOUR, at most
+        what keeps the small-edge pairs within A_SMALL_FRAC of A's pairs at cost. 0 when off."""
+        rate = getattr(config, "A_SMALL_PER_HOUR", None)
+        if not getattr(config, "A_SMALL_FRAC", None) or not rate:
+            return 0.0
+        self._small_spent = [(t, c) for t, c in self._small_spent if t > time.time() - 3600]
+        left = rate - sum(c for _, c in self._small_spent)
+        cap = self.a_small_shortfall(small, total) if total > 0 else float("inf")
+        return max(0.0, min(left, cap))
+
     @staticmethod
     def a_small_shortfall(small, total):
         """Cash to put into small-edge pairs to bring the bucket back to A_SMALL_FRAC of A's pairs at cost:
@@ -473,6 +488,10 @@ class Runner:
                 continue
             pairs = min(held.get(e, {}).get("no", 0.0) for e in a.ex)
             asks = [q.get(e, {}).get("bestAsk") for e in a.ex]
+            if pairs >= 1 and getattr(config, "A_SMALL_PROTECT", False) and getattr(config, "A_SMALL_FRAC", None):
+                legs = [held[e] for e in a.ex]
+                if sum(l["cost"] / max(l.get("raw_no", l["no"]), 1e-9) for l in legs) >= 1.0 - config.A_SMALL_EDGE - 1e-9:
+                    continue                        # small-edge pairs are not sold to fund swaps (A_SMALL_PROTECT)
             if pairs >= 1 and None not in asks and not a.paused():
                 s = sum(1 - x for x in asks)
                 if s >= floor - 1e-9:
@@ -555,6 +574,7 @@ class Basket:
         self.r, self.name, self.legs = runner, name, legs
         self.ex = [l["exchange_id"] for l in legs]
         self.cash_blocked = False   # set by plan(): out of cash above the reserve
+        self.last_buy_cost = 0.0    # cost of the last try_once entry (paced small edges)
         self.paused_until = 0.0     # after a rejected pair order: leave this race alone until then
         # strategy B race: may hold unequal legs on purpose; arb trades keep that imbalance unchanged
         # (independent of B_ENABLED: legacy C positions stay unequal even if B/C are switched off)
@@ -685,7 +705,8 @@ class Basket:
         q, limits, res, held = p
         print(f"  {self.name}: EDGE {q} pairs, limits {limits}, "
               f"expected cost {res['avg_cost']:.4f}/pair, locked >= {q - q * res['avg_cost']:.3f}")
-        self.send_pair("buy", q, limits, held)
+        got = self.send_pair("buy", q, limits, held)
+        self.last_buy_cost = (got or 0) * sum(limits)      # upper bound (every share at its limit): A_SMALL_PER_HOUR
 
     def paused(self):
         return time.time() < self.paused_until

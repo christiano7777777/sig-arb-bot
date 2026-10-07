@@ -78,8 +78,14 @@ ROTATE_TRIGGER_CASH = 50     # "out of budget" = less than this above the reserv
 # A's new cash buys only small-edge entries, at most the shortfall; bigger edges are swap-only. Swaps may
 # sell the bucket (a target, not a floor); it refills from freed cash only, never by swapping deep pairs in.
 A_SMALL_EDGE = 0.01
-A_SMALL_FRAC = None          # user, 2026-10-07 13:30: off (was 0.20); deep edges kept recurring, so bucket pairs were
-                             # bought and swapped out within seconds (~0.015/pair lost). None = off
+A_SMALL_FRAC = 0.20          # cap: small-edge pairs at most this share of A's pairs at cost. None = off
+                             # (13:30 off: unpaced, swaps sold the new pairs within seconds, ~0.015/pair lost)
+# Paced small edges (user, 2026-10-07 14:30: "put some money on small edge, but slowly"): small-edge entries get
+# first claim on A's cash, but at most A_SMALL_PER_HOUR SUSQies (at limit cost) per rolling hour; all other
+# entries are unchanged (highest edge first). A_SMALL_PROTECT: swaps never sell races whose average pair cost
+# is >= 1 - A_SMALL_EDGE, so these are not bought and sold again; plain exits at >= 1 still apply.
+A_SMALL_PER_HOUR = 300
+A_SMALL_PROTECT = True
 # D paused for A (user, 2026-10-07): while A's small-edge bucket is below this share of A's pairs at cost,
 # D's CASH_SPLIT share goes to A. D still exits and buys missing hedges (those draw on all free cash), but
 # takes no new position. D gets its share back once the bucket is >= this (re-checked every poll).

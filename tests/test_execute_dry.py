@@ -83,6 +83,7 @@ def make_runner(fake, min_edge=0.005, exposure=None, capital=50_000, reserve=50_
     config.A_CAPITAL_CAP = a_cap
     config.CASH_SPLIT = cash_split
     config.A_SMALL_EDGE, config.A_SMALL_FRAC = 0.01, small_frac
+    config.A_SMALL_PER_HOUR, config.A_SMALL_PROTECT = 300, True
     config.D_PAUSE_UNTIL_A_SMALL = None
     config.C_LIMIT, config.C_SKEW, config.C_SKEW_MAX, config.C_QUOTE_EDGE, config.C_CLIP = 2_000, 0.10, 0.25, 0.02, 500
     config.C_EXTRA_RACES = 5
@@ -1138,9 +1139,18 @@ def _deep_held(fake, n):
     return {fake.ex_of("Held race", "D"): (-n, 0.47 * n), fake.ex_of("Held race", "R"): (-n, 0.47 * n)}
 
 
+def _race_of(fake, ex):
+    for n in ("Big race", "Small race", "Held race"):
+        try:
+            if fake.ex_of(n, "D") == ex:
+                return n
+        except Exception:                          # race not in this test's fake exchange
+            pass
+    return "?"
+
+
 def _buy_races(fake, r):
-    return [next(n for n in ("Big race", "Small race") if b["legs"][0]["exchangeId"] == fake.ex_of(n, "D"))
-            for _, b in r.sent if b["legs"][0]["action"] == "buy"]
+    return [_race_of(fake, b["legs"][0]["exchangeId"]) for _, b in r.sent if b["legs"][0]["action"] == "buy"]
 
 
 def test_small_edge_shortfall_math():
@@ -1153,31 +1163,61 @@ def test_small_edge_shortfall_math():
     assert f(0, 1_000) == 0                       # rule off
 
 
-def test_bucket_below_target_cash_goes_to_small_edge_only():
-    fake = FakeClient({"Big race": EDGE_02, "Small race": EDGE_01, "Held race": NO_EDGE}, balance=1_000 + 600)
-    fake.held = _deep_held(fake, 10_000)          # bucket 0% of 9,400 -> short 2,350 > 600 room
-    r = make_runner(fake, reserve=1_000, small_frac=0.2)
-    r.poll()
-    assert _buy_races(fake, r) == ["Small race"]                       # the 0.02 edge waits (swap-only)
+def _spent(fake, r):
+    """{race: cost} of the buys sent (quantity x limit sum, the worst case the pacing counts)."""
+    out = {}
+    for _, body in r.sent:
+        if body["legs"][0]["action"] == "buy":
+            race = _race_of(fake, body["legs"][0]["exchangeId"])
+            out[race] = out.get(race, 0) + body["legs"][0]["quantity"] * sum(l["price"] for l in body["legs"])
+    return out
 
 
-def test_bucket_refill_spends_at_most_the_shortfall():
+def test_small_edge_first_but_paced_then_highest_edge_as_usual():
     fake = FakeClient({"Big race": EDGE_02, "Small race": EDGE_01, "Held race": NO_EDGE}, balance=1_000 + 600)
-    fake.held = _deep_held(fake, 1_000)           # 940 at cost -> short 235 < 600 room
+    fake.held = _deep_held(fake, 10_000)          # small-edge 0% of 9,400 (cap 2,350); room 600, pace 300/h
     r = make_runner(fake, reserve=1_000, small_frac=0.2)
     r.poll()
-    buys = [b for _, b in r.sent if b["legs"][0]["action"] == "buy"]
+    got = _spent(fake, r)
+    assert _buy_races(fake, r)[0] == "Small race" and got["Small race"] <= 300 + 1e-6
+    assert "Big race" in got                      # the 0.02 edge still gets cash (no longer swap-only)
+
+
+def test_small_edge_capped_by_the_20pct_shortfall():
+    fake = FakeClient({"Big race": EDGE_02, "Small race": EDGE_01, "Held race": NO_EDGE}, balance=1_000 + 600)
+    fake.held = _deep_held(fake, 1_000)           # 940 at cost -> 20% shortfall 235 < pace 300
+    r = make_runner(fake, reserve=1_000, small_frac=0.2)
+    r.poll()
+    assert _spent(fake, r)["Small race"] <= 235 + 1e-6
+
+
+def test_small_edge_pace_used_up_skips_small_entries():
+    fake = FakeClient({"Small race": EDGE_01, "Held race": NO_EDGE}, balance=1_000 + 600)
+    fake.held = _deep_held(fake, 10_000)
+    r = make_runner(fake, reserve=1_000, small_frac=0.2)
+    r._small_spent = [(time.time() - 60, 290.0)]  # 290 of 300 used this hour: 10 left < 50 minimum
+    r.poll()
+    assert _buy_races(fake, r) == []
+    r._small_spent = [(time.time() - 3_700, 290.0)]   # older than an hour: allowance back
+    r.poll()
     assert _buy_races(fake, r) == ["Small race"]
-    assert buys[0]["legs"][0]["quantity"] * sum(l["price"] for l in buys[0]["legs"]) <= 235 + 1e-6
 
 
-def test_bucket_at_target_higher_edge_first_as_before():
+def test_small_edge_pairs_never_fund_swaps():
+    fake = FakeClient({"Aaa race": EDGE_005, "Held race": SELLER_0995}, balance=50_000.5)
+    fake.held = held_pairs(fake, "Held race", 500)    # cost 0.99: small-edge pairs, bids 0.995 could fund it
+    r = make_runner(fake, small_frac=0.2)
+    assert r.sellers(r.quotes(), r.positions(), r.baskets[0], 0.0) == []
+    config.A_SMALL_PROTECT = False
+    assert r.sellers(r.quotes(), r.positions(), r.baskets[0], 0.0)
+
+
+def test_small_edge_off_buys_highest_edge_first():
     fake = FakeClient({"Big race": EDGE_02, "Small race": EDGE_01, "Held race": NO_EDGE}, balance=1_000 + 600)
-    fake.held = held_pairs(fake, "Held race", 10_000)   # cost 0.99 -> 100% in the bucket
-    r = make_runner(fake, reserve=1_000, small_frac=0.2)
+    fake.held = _deep_held(fake, 10_000)
+    r = make_runner(fake, reserve=1_000, small_frac=None)
     r.poll()
     assert _buy_races(fake, r)[0] == "Big race"
-
 
 # ---- D paused for A until A's small-edge bucket is >= 10% (user, 2026-10-07) ------------------------------
 SPLIT = {"D": 0.5, "A": 0.25, "B": 0.2, "C": 0.05}
