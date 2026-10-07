@@ -20,7 +20,10 @@ fair = snap.get("value_fair")                     # C and D positions at Kalshi 
 if fair is None and b.get("leftover_fair_minus_cost") is not None:
     fair = round(snap["value_at_settlement"] + b["leftover_fair_minus_cost"], 2)
 point = {"t": snap["updated"], "settle": snap["value_at_settlement"], "mtm": snap["mark_to_market"], "fair": fair}
-if snap.get("strategy_now"):                      # value per strategy now: A settlement, B/C/D market value
+hc = snap.get("history_complete")
+if snap.get("strategy_now") and (hc is None or all(hc.values())):
+    # value per strategy now: A settlement, B/C/D market value; not recorded while the fill/trade history
+    # is still loading (a run's first hour), when the split between strategies is partial
     point["s2"] = snap["strategy_now"]
 if "value_fair" in snap:
     point["d_fixed"] = True                       # D already counted by the snapshot (tools/fix_history_d.py skips it)

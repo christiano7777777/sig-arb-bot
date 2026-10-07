@@ -147,6 +147,7 @@ def build(c):
     return {
         "strategy_series": s_series,             # since the Cup began: A pairs 1 / legs at cost; B, C, D at cost (past)
         "strategy_now": s_now,                   # now: A as above; B, C, D at the current SUSQ market value (mid)
+        "history_complete": dict(SYNC),          # fills/trades loaded back to the start (else the split is partial)
         "d": d_view,
         "b": b,
         "activity": activity,
@@ -236,30 +237,70 @@ def exchange_map(c):
     return out
 
 
-def tagged_fills(c, tid, tags, max_pages=15):
-    """Our fills since strategy B went live, attributed by orderId to the strategy that placed the order.
-    Fills already seen are cached in state/, so after the first call this is about one read.
-    Returns {"A": [...], "B": [...], "M": [...], "untagged": [...]}; untagged fills before tagging began
-    are history (counted, not attributed). Fill price is the NO price for our NO-side fills."""
-    since = getattr(config, "B_LIVE_SINCE", "2100-01-01T00:00:00+00:00")
+# History paging (2026-10-07): every bot run starts on a fresh runner with empty caches, and reading only the
+# newest 15 (fills) / 60 (trades) pages cut the history short, so each run restated the split between the
+# strategies (A -1.9k at the 20:19 run start on 2026-10-06 with the total unchanged; any trade without a
+# matching fill was counted as A). The caches now fill back to the start: newest pages until they reach
+# the cache, then at most BACKFILL_PAGES older pages per call, resumed from a saved cursor (the cursors
+# are keyset: createdAt + id), so a snapshot every 2 min adds ~5 reads/min inside the account's
+# 100 reads/min that it shares with the bot. A full first pass takes about an hour.
+NEW_PAGES, BACKFILL_PAGES = 10, 10
+FILL_KEYS = ("orderId", "exchangeId", "price", "quantity", "side", "filledAt")
+SYNC = {"fills": False, "trades": False}          # True once a cache reaches back to where it must start
+
+
+def sync_pages(path, read, key, keep, ts, older_than=""):
+    """Cache of a newest-first paginated list in `path`. read(cursor) -> response; key(item) -> id;
+    keep(item) -> what is stored; ts: the item's time field. Backfill ends at the end of the list or at a
+    page older than older_than. Returns ({id: item}, complete)."""
     try:
-        cache = json.loads(FILLS.read_text(encoding="utf-8"))
+        st = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        cache = {}
+        st = {}
+    if "items" not in st:                          # empty, or the old newest-pages-only format: start over
+        st = {"items": {}, "older": None, "done": False}
+    items = st["items"]
     cursor = None
-    for _ in range(max_pages):
-        r = c.get("/portfolio/fills", tournamentId=tid, limit=200, cursor=cursor)
-        page = r.get("data", [])
-        new = [f for f in page if str(f["id"]) not in cache]
-        for f in new:
-            cache[str(f["id"])] = {k: f.get(k) for k in ("orderId", "exchangeId", "price", "quantity", "side", "filledAt")}
-        pg = r.get("pagination", {})
-        oldest = min((f["filledAt"] for f in page), default="")
-        if len(new) < len(page) or oldest < since[:19] or not pg.get("hasMore"):
+    for _ in range(NEW_PAGES):
+        r = read(cursor)
+        page, pg = r.get("data", []), r.get("pagination", {})
+        new = [x for x in page if key(x) not in items]
+        for x in new:
+            items[key(x)] = keep(x)
+        if st["older"] is None and not st["done"]:  # first page of an empty cache: backfill continues from here
+            st["older"], st["done"] = pg.get("nextCursor"), not pg.get("hasMore")
+            break
+        if len(new) < len(page) or not pg.get("hasMore"):
             break
         cursor = pg["nextCursor"]
-    FILLS.parent.mkdir(exist_ok=True)
-    FILLS.write_text(json.dumps(cache), encoding="utf-8")
+    else:                                          # > NEW_PAGES pages since the last call: refill from scratch
+        print(f"{path.name}: newest pages did not reach the cache; refilling", file=sys.stderr)
+        st = {"items": items, "older": cursor, "done": False}
+    for _ in range(BACKFILL_PAGES):
+        if st["done"]:
+            break
+        r = read(st["older"])
+        page, pg = r.get("data", []), r.get("pagination", {})
+        for x in page:
+            items.setdefault(key(x), keep(x))
+        oldest = min((x[ts] for x in page), default="")
+        st["older"] = pg.get("nextCursor")
+        st["done"] = not pg.get("hasMore") or not st["older"] or bool(older_than and oldest < older_than)
+    path.parent.mkdir(exist_ok=True)
+    path.write_text(json.dumps(st), encoding="utf-8")
+    return items, st["done"]
+
+
+def tagged_fills(c, tid, tags):
+    """Our fills since strategy B went live, attributed by orderId to the strategy that placed the order.
+    Fills are cached in state/ and filled back to B_LIVE_SINCE a few pages per call (sync_pages).
+    Returns {"A": [...], "B": [...], "C": [...], "D": [...], "untagged": [...]}; untagged fills before
+    tagging began are history (counted, not attributed). Fill price is the NO price for our NO-side fills."""
+    since = getattr(config, "B_LIVE_SINCE", "2100-01-01T00:00:00+00:00")
+    cache, SYNC["fills"] = sync_pages(
+        FILLS, lambda cur: c.get("/portfolio/fills", tournamentId=tid, limit=200, cursor=cur),
+        key=lambda f: str(f["id"]), keep=lambda f: {k: f.get(k) for k in FILL_KEYS}, ts="filledAt",
+        older_than=since[:19])
     ex = exchange_map(c)
     out = {"A": [], "B": [], "C": [], "D": [], "untagged": []}
     for f in sorted(cache.values(), key=lambda f: f["filledAt"]):
@@ -297,39 +338,30 @@ def quotes_all(c, tid, legs_of):
 ALLTRADES = Path(__file__).resolve().parents[1] / "state" / "trades_all.json"
 
 
-def fetch_all_trades(c, max_pages=60):
+def fetch_all_trades(c):
     """Every trade since the Cup began (transactions endpoint, has BUY/SELL). Cached in state/ without
-    pruning: the first call pages through the whole history, later calls read about one page."""
-    try:
-        cache = json.loads(ALLTRADES.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        cache = {}
-    cursor = None
-    for _ in range(max_pages):
-        r = c.get(f"/tournaments/{config.TOURNAMENT_SLUG}/portfolio/transactions", limit=200, cursor=cursor)
-        page = [t for t in r.get("data", []) if t.get("event_type") == "trade"]
-        new = [t for t in page if t["event_id"] not in cache]
-        for t in new:
-            cache[t["event_id"]] = {k: t[k] for k in ("createdAt", "orderType", "quantity", "price", "marketTitle")}
-        pg = r.get("pagination", {})
-        if (page and len(new) < len(page)) or not pg.get("hasMore"):
-            break
-        cursor = pg["nextCursor"]
-    ALLTRADES.parent.mkdir(exist_ok=True)
-    ALLTRADES.write_text(json.dumps(cache), encoding="utf-8")
-    return list(cache.values())
+    pruning and filled back to the first trade a few pages per call (sync_pages)."""
+    cache, SYNC["trades"] = sync_pages(
+        ALLTRADES, lambda cur: c.get(f"/tournaments/{config.TOURNAMENT_SLUG}/portfolio/transactions",
+                                     limit=200, cursor=cur),
+        key=lambda t: t["event_id"],
+        keep=lambda t: {k: t.get(k) for k in ("event_type", "createdAt", "orderType", "quantity", "price", "marketTitle")},
+        ts="createdAt")
+    return [t for t in cache.values() if t.get("event_type") == "trade"]
 
 
 def strategy_series(trades, attrib, step_min=10):
     """Value of each strategy since the Cup began, on a 10-minute grid plus now: its own cash flow plus
     what it holds, valued like the main 'value at settlement' (a pair pays 1, a single leg at its cost).
-    Who traded: order tags since TAGS_SINCE (exact); before B went live everything was A; in between,
-    two-leg pair trades are A and single legs on Kalshi-mapped races are C (estimated)."""
+    Who traded: before B went live everything was A; from TAGS_SINCE, the tags of the fills in the same
+    second on the same leg (a trade is one order, its fills one per price level); in between (estimated),
+    equal-size two-leg trades are A and other trades on Kalshi-mapped races are C. A trade no fill accounts
+    for (fill history not loaded that far back yet, or untagged) is U, unattributed, never A."""
     from datetime import timedelta
-    tagged = {}
-    for s in ("A", "B", "C", "D"):
+    fills_at = defaultdict(lambda: defaultdict(float))          # (second, race, party) -> {strategy: qty}
+    for s in ("A", "B", "C", "D", "untagged"):
         for f in attrib.get(s, []):
-            tagged[(f["ts"][:19], f["race"], f["party"], f["qty"], round(f["price"] or 0, 4))] = s
+            fills_at[(f["ts"][:19], f["race"], f["party"])]["U" if s == "untagged" else s] += f["qty"]
     legs = []
     for t in trades:
         g = TITLE.match(t["marketTitle"].strip())
@@ -338,18 +370,33 @@ def strategy_series(trades, attrib, step_min=10):
     legs.sort(key=lambda x: x["ts"])
     b_live = getattr(config, "B_LIVE_SINCE", "2100")[:19]
     tags_since = getattr(config, "TAGS_SINCE", "2100")[:19]
-    by_sec = defaultdict(set)
+    by_sec = defaultdict(dict)                                   # (race, second) -> {party: qty}
     for x in legs:
-        by_sec[(x["race"], x["ts"])].add(x["party"])
+        by_sec[(x["race"], x["ts"])][x["party"]] = by_sec[(x["race"], x["ts"])].get(x["party"], 0) + x["qty"]
+
+    def who(x):
+        """Strategy of a trade from its fills; the next/previous second too (fill and trade times can
+        straddle a second)."""
+        t = datetime.fromisoformat(x["ts"])
+        for d in (0, 1, -1):
+            got = fills_at.get(((t + timedelta(seconds=d)).isoformat()[:19], x["race"], x["party"]))
+            if got:
+                if len(got) == 1:
+                    return next(iter(got))
+                same = [s for s, q in got.items() if abs(q - x["qty"]) < 1e-9]   # two orders that second
+                return same[0] if len(same) == 1 else "U"
+        return "U"
+
     for x in legs:
-        key = (x["ts"], x["race"], x["party"], x["qty"], round(x["px"], 4))
-        if key in tagged:
-            x["s"] = tagged[key]
-        elif x["ts"] < b_live or x["ts"] >= tags_since:
+        if x["ts"] < b_live:
             x["s"] = "A"
-        else:                                              # 07:34-09:30: pairs are A, single legs on C races are C
-            x["s"] = "A" if len(by_sec[(x["race"], x["ts"])]) > 1 or x["race"] not in config.B_RACES else "C"
-    state = {s: {"cash": 0.0, "legs": defaultdict(lambda: [0.0, 0.0])} for s in ("A", "B", "C", "D")}
+        elif x["ts"] >= tags_since:
+            x["s"] = who(x)
+        else:                                              # 07:34-09:30 on 2026-10-04, no tags: estimated
+            q = by_sec[(x["race"], x["ts"])]
+            pair = len(q) == 2 and abs(min(q.values()) - max(q.values())) < 1e-9   # same size both legs
+            x["s"] = "A" if pair or x["race"] not in config.B_RACES else "C"
+    state = {s: {"cash": 0.0, "legs": defaultdict(lambda: [0.0, 0.0])} for s in ("A", "B", "C", "D", "U")}
 
     def value(st):
         v = st["cash"]
@@ -404,7 +451,7 @@ def strategy_now(c, tid, series, state, legs_of, quotes):
     for i in range(0, len(need), 100):
         r = c.get("/exchanges/prices", ids=",".join(need[i:i + 100]), tournamentId=tid)
         quotes.update({x["exchangeId"]: x for x in r["data"]})
-    out = {"A": series[-1]["A"]}
+    out = {"A": series[-1]["A"], "U": series[-1]["U"]}
     for s in ("B", "C", "D"):
         v = state[s]["cash"]
         for (race, party), (q, cost) in state[s]["legs"].items():

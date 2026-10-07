@@ -397,17 +397,22 @@ function renderD(d) {
 }
 
 let snap = null;
-// strategy A's own gain over the last h hours (its value: pairs pay 1, single legs at cost), from the
-// per-strategy values recorded in the history; null until both ends have them. (Before 2026-10-05 this was
-// the whole portfolio on the Kalshi-fair line, so C/D marks and Kalshi read failures showed up as "A losing".)
+// strategy A's own gain over the last h hours (its value: pairs pay 1, single legs at cost), from the trade
+// replay (strategy_series), which is recomputed from the full history every snapshot. (Until 2026-10-07 this
+// used the values recorded in the history, which each bot run restated: a run reloaded only part of the
+// history, and trades it could not attribute were counted as A.) null until the replay covers h hours.
+function aSeries() {
+  const ser = (snap && snap.strategy_series) || [];
+  return ser.filter(p => p.A != null).map(p => ({ t: p.t, v: p.A }));
+}
 function valueGained(h) {
-  const pts = hist.filter(p => p.s2 && p.s2.A != null);
+  const pts = aSeries();
   if (pts.length < 2) return null;
   const end = pts[pts.length - 1], t0 = new Date(end.t).getTime() - h * 3600e3;
   if (new Date(pts[0].t).getTime() > t0) return null;
   let start = pts[0];
   for (const p of pts) { if (new Date(p.t).getTime() <= t0) start = p; else break; }
-  return end.s2.A - start.s2.A;
+  return end.v - start.v;
 }
 
 function renderActivity() {
@@ -544,7 +549,8 @@ const sWin = { A: 0, B: 0, C: 0, D: 0 };
 function stratPoints(k) {
   // the 10-minute grid since the Cup began (B, C, D at cost) until market-value points were recorded,
   // then those points (A: pairs pay 1, legs at cost; B, C, D: current SUSQ market value)
-  const live = hist.filter(p => p.s2 && p.s2[k] != null).map(p => ({ t: p.t, v: p.s2[k] }));
+  // A: the replay only (its value needs no market prices, so the replay is exact once the history is loaded)
+  const live = k === "A" ? [] : hist.filter(p => p.s2 && p.s2[k] != null).map(p => ({ t: p.t, v: p.s2[k] }));
   const firstLive = live.length ? new Date(live[0].t).getTime() : Infinity;
   let pts = ((snap && snap.strategy_series) || []).filter(p => new Date(p.t).getTime() < firstLive)
     .map(p => ({ t: p.t, v: p[k] })).concat(live);
@@ -564,7 +570,11 @@ function drawStrat(k) {
   const now = ((snap && snap.strategy_now) || {})[k];
   document.getElementById("l" + k).innerHTML = `<span><i style="background:${SCOL[k]}"></i>${SNAME[k]}: <b>${fmt(now)}</b></span>`;
   document.getElementById("n" + k).textContent = k === "A"
-    ? "Its own trades only: cash flow + what it holds, a pair paying 1 and single legs at cost (like the main curve)."
+    ? "Its own trades only: cash flow + what it holds, a pair paying 1 and single legs at cost (like the main curve)." +
+      (snap.history_complete && !Object.values(snap.history_complete).every(Boolean)
+        ? " Trade history still loading (first hour of a bot run): the split between strategies is partial."
+        : "") +
+      ((snap.strategy_now || {}).U ? ` Unattributed trades (no matching tagged fill): ${fmt(snap.strategy_now.U)}.` : "")
     : `Its own trades only: cash flow + what it holds at the current SUSQ market value (mid), recorded from ${liveFrom ? new Date(liveFrom).toLocaleString() : "now on"}; before that at cost.`;
   if (pts.length < 2) {
     svg.innerHTML = `<text x="${W / 2}" y="${H / 2}" text-anchor="middle" style="fill:var(--muted);font-size:12px">Waiting for data…</text>`;
