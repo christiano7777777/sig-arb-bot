@@ -111,11 +111,12 @@
         <div class="cards" id="sumA"></div></div>
       <div class="panel pm"><div class="ptitle"><span class="badge bm">B</span> Pair maker <span class="n">resting pair quotes</span></div>
         <div class="cards" id="sumM"></div></div>
-      <div class="panel pb"><div class="ptitle"><span class="badge bb">C</span> Kalshi market making <span class="n">two-sided, inventory-limited</span></div>
+      <div class="panel pb"><div class="ptitle"><span class="badge bb">C</span> Kalshi market making <span class="n" id="csub">two-sided, inventory-limited</span></div>
         <div class="cards" id="sumB"></div></div>
       <div class="panel pd"><div class="ptitle"><span class="badge bd">D</span> Senate stat arb <span class="n">delta-hedged</span></div>
         <div class="cards" id="sumD"></div></div>
     </div>
+    <p class="note" id="recon"></p>
   </section>
 
   <section data-panel="a" hidden>
@@ -219,9 +220,10 @@
         <tbody id="brecent"></tbody>
       </table>
     </div>
-    <p class="note">C quotes both sides of every held race (and bids in the 5 non-held races furthest below Kalshi) around a
-      reservation price = Kalshi fair (mid, overround removed) skewed against our inventory; no takes. Risk-adding quotes only
-      below 2,000 shares per race, so larger positions unwind through the risk-cutting quotes. Quotes never make the pair cheaper for others.
+    <p class="note">C's quotes sit around a reservation price = Kalshi fair (mid, overround removed) skewed against our
+      inventory. Cut-only (since 2026-10-05): no new inventory, every quote reduces what C holds. Since 2026-10-07 C also sells
+      its leftover leg straight into the bids while they are within 0.03 of Kalshi fair (races without arb pairs only).
+      Quotes never make the pair cheaper for others.
       At risk = shares that pay 0 if the underdog wins. Holding: the race still has arb pairs. Closing: no pairs left,
       the leftover is unwound slowly with skewed quotes. Trades are attributed exactly from our order tags since
       tagging began; earlier B trades are estimated (single legs on B races). Expected gain uses Kalshi's current
@@ -282,11 +284,11 @@ function render(d) {
     card("Value at settlement", fmt(d.value_at_settlement), `${pnl >= 0 ? "+" : ""}${fmt(pnl)} vs ${fmt(d.initial, 0)} · C and D positions at cost`, pnl >= 0 ? "pos" : "neg") +
     (d.value_fair != null ? card("With C and D at Kalshi fair", fmt(d.value_fair),
                 (v => `${v >= 0 ? "+" : ""}${fmt(v)} vs start`)(d.value_fair - d.initial)) : "") +
-    card("Cash", fmt(d.cash), d.extra_enabled
+    card("Cash", fmt(d.cash), (d.cash_split ? `new cash: ${["A", "B", "C", "D"].map(k => `${k} ${Math.round((d.cash_split[k] || 0) * 100)}%`).join(" · ")} · ` : "") + (d.extra_enabled
       ? `${fmt(Math.max(d.cash - d.reserve, 0))} for any edge · ${fmt(Math.max(d.cash - d.hard_reserve, 0))} for edge ≥ ${d.extra_min_edge}`
       : (d.a_cap != null || d.hard_reserve != null) ? `${fmt(Math.max(d.cash - d.hard_reserve, 0))} free above the ${fmt(d.hard_reserve, 0)} hard reserve`
       : d.cash >= d.reserve ? `${fmt(d.cash - d.reserve)} above ${fmt(d.reserve, 0)} reserve`
-                            : `below the ${fmt(d.reserve, 0)} reserve: arb buys only via swaps`) +
+                            : `below the ${fmt(d.reserve, 0)} reserve: arb buys only via swaps`)) +
     card("Mark-to-market", fmt(d.mark_to_market), `${mtm >= 0 ? "+" : ""}${fmt(mtm)} at current prices`, mtm >= 0 ? "pos" : "neg");
 
   document.getElementById("warnings").innerHTML = (d.warnings && d.warnings.length)
@@ -299,7 +301,7 @@ function render(d) {
   const locked = d.rows.reduce((s, r) => s + (r.locked || 0), 0);
   document.getElementById("sumA").innerHTML =
     (d.a_cap != null ? card("Capital used", fmt(d.a_capital, 0), `of ${fmt(d.a_cap, 0)} cap · ${d.a_capital > d.a_cap ? "over: no new buys, swaps only" : fmt(d.a_cap - d.a_capital, 0) + " left to buy"}`,
-                            d.a_capital > d.a_cap ? "neg" : "") : card("Capital used", fmt(d.a_capital, 0), "pairs at cost · no cap, 25% of new cash")) +
+                            d.a_capital > d.a_cap ? "neg" : "") : card("Capital used", fmt(d.a_capital, 0), "pairs at cost · no cap" + (d.cash_split ? `, ${Math.round((d.cash_split.A || 0) * 100)}% of new cash` : ""))) +
     card("Pairs held", fmt(d.pairs, 0), `${d.rows.filter(r => r.pairs > 0).length} races`) +
     card("Locked on held pairs", "+" + fmt(locked), "pairs pay 1 − what they cost") +
     card("Trades, last 24h", fmt(((a24.buy || {}).orders || 0) + ((a24.swap || {}).orders || 0) + ((a24.exit || {}).orders || 0), 0),
@@ -310,7 +312,8 @@ function render(d) {
     card("Fills, last 24h", fmt((mk["24h"] || {}).fills || 0, 0), `${fmt((mk["24h"] || {}).shares || 0, 0)} shares`) +
     card("Fills, last 1h", fmt((mk["1h"] || {}).fills || 0, 0), `${fmt((mk["1h"] || {}).shares || 0, 0)} shares`);
   document.getElementById("sumB").innerHTML = !b ? card("Strategy C", "off", "") :
-    card("Shares at risk", fmt((b.c_summary || {}).exposure, 0), `${fmt((b.c_summary || {}).above_limit, 0)} above the ${fmt((b.c_summary || {}).limit, 0)}/race limit, unwinding`) +
+    card("Shares at risk", fmt((b.c_summary || {}).exposure, 0), (b.c_summary || {}).cut_only ? "all being unwound (cut-only)"
+         : `${fmt((b.c_summary || {}).above_limit, 0)} above the ${fmt((b.c_summary || {}).limit, 0)}/race limit, unwinding`) +
     card("Expected gain vs Kalshi", (b.expected_gain_vs_kalshi >= 0 ? "+" : "") + fmt(b.expected_gain_vs_kalshi), "estimate, not locked",
          b.expected_gain_vs_kalshi >= 0 ? "pos" : "neg");
   const dd = d.d;
@@ -318,6 +321,14 @@ function render(d) {
     card("Gap (Rep control)", dd.gap == null ? "–" : (dd.gap >= 0 ? "+" : "") + fmt(dd.gap, 4), `Kalshi ${fmt(dd.kalshi_r, 3)} vs SUSQ ${fmt(dd.susq_r, 4)}`) +
     card("Position", fmt(dd.control, 0), dd.direction > 0 ? "long Rep control" : dd.direction < 0 ? "short Rep control" : "flat") +
     card("D P&L", (dd.pnl_bid >= 0 ? "+" : "") + fmt(dd.pnl_bid), "at SUSQ bids", dd.pnl_bid >= 0 ? "pos" : "neg");
+  // the per-strategy values come from a replay of the trade history, not from the account: show how far apart they are
+  const sn = d.strategy_now || {}, ssum = Object.values(sn).reduce((s, v) => s + (v || 0), 0);
+  document.getElementById("recon").innerHTML = !Object.keys(sn).length ? "" : loading()
+    ? "Strategy values: trade history still loading after a bot restart."
+    : `Strategy values (A ${fmt(sn.A)}, B ${fmt(sn.B)}, C ${fmt(sn.C)}, D ${fmt(sn.D)}${sn.U ? `, unattributed ${fmt(sn.U)}` : ""}) sum to
+       <b>${(ssum >= 0 ? "+" : "") + fmt(ssum)}</b> vs <b>${(pnl >= 0 ? "+" : "") + fmt(pnl)}</b> total P&amp;L at settlement:
+       difference ${(ssum - pnl >= 0 ? "+" : "") + fmt(ssum - pnl)}. The split is an estimate from a replay of the trade history
+       (B, C, D at SUSQ mid) and does not reconcile with the account yet.`;
   renderActivity();
   document.getElementById("recent").innerHTML = (d.recent || []).map(t =>
     `<tr><td>${new Date(t.ts).toLocaleTimeString()}</td><td class="k-${t.kind}">${t.kind}</td>
@@ -335,8 +346,11 @@ function render(d) {
 function renderB(b) {
   if (!b) { document.getElementById("bintro").textContent = "Strategy C is off."; return; }
   const cs = b.c_summary || {};
-  document.getElementById("bintro").innerHTML =
-    `<span class="badge bb">C</span> Quotes both sides around Kalshi fair value, skewed against inventory (${fmt(cs.skew, 2)} at ${fmt(cs.limit, 0)} shares);
+  document.getElementById("csub").textContent = cs.cut_only ? "unwinding (cut-only)" : "two-sided, inventory-limited";
+  document.getElementById("bintro").innerHTML = cs.cut_only
+    ? `<span class="badge bb">C</span> Unwinding: no new inventory (cut-only). Sells its leftover leg into the bids while they are
+       within ${fmt(cs.dump_gap, 2)} of Kalshi fair (races without arb pairs); the rest rests at the best ask, skewed against inventory.`
+    : `<span class="badge bb">C</span> Quotes both sides around Kalshi fair value, skewed against inventory (${fmt(cs.skew, 2)} at ${fmt(cs.limit, 0)} shares);
      no takes. Adds risk only below ${fmt(cs.limit, 0)} shares per race; above it only risk-cutting quotes, which unwind older positions.
      Also bids in the ${cs.extra_races || 5} races we do not hold that sit furthest below Kalshi.`;
   const g = b.expected_gain_vs_kalshi;

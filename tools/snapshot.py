@@ -159,6 +159,7 @@ def build(c):
         "a_capital": round(sum(r["pairs"] * (r["avg_cost"] or 0) for r in rows), 2),
         "a_cap": getattr(config, "A_CAPITAL_CAP", None),
         "hard_reserve": getattr(config, "HARD_RESERVE", config.RESERVE),
+        "cash_split": getattr(config, "CASH_SPLIT", None),   # share of the free cash each strategy may spend
         "extra_enabled": getattr(config, "EXTRA_CAPITAL_ENABLED", False),
         "extra_min_edge": getattr(config, "EXTRA_MIN_EDGE", None),
         "initial": t["initialBalance"],
@@ -607,6 +608,8 @@ def add_c_view(b, quotes, legs_of, cash):
         adds = any(o["adds"] for o in res["orders"]); cuts = any(not o["adds"] for o in res["orders"])
         state = ("over limit: cutting only" if e >= config.C_LIMIT else "two-sided" if adds and cuts
                  else "adding" if adds else "cutting" if cuts else "idle (SUSQ near fair)")
+        if min(h["D"], h["R"]) < 1 and strategy_c.dump(books, p, h) is not None:     # C_DUMP_GAP (2026-10-07)
+            state = "selling into bids"
         row["c"] = {"state": state, "exposure": round(e), "limit": config.C_LIMIT,
                     "fair": {x: round(1 - p[x], 4) for x in "DR"},
                     "book": {x: {"bid": books[x]["bids"][0][0] if books[x]["bids"] else None,
@@ -614,7 +617,8 @@ def add_c_view(b, quotes, legs_of, cash):
                     "reservation": res["reservation"],
                     "quotes": [{k: o[k] for k in ("leg", "side", "price", "qty", "adds")} for o in res["orders"]]}
     b["c_summary"] = {"exposure": round(total), "above_limit": round(above), "limit": config.C_LIMIT,
-                      "skew": config.C_SKEW, "quote_edge": config.C_QUOTE_EDGE, "extra_races": config.C_EXTRA_RACES}
+                      "skew": config.C_SKEW, "quote_edge": config.C_QUOTE_EDGE, "extra_races": config.C_EXTRA_RACES,
+                      "cut_only": getattr(config, "C_CUT_ONLY", False), "dump_gap": getattr(config, "C_DUMP_GAP", None)}
 
 
 def strategy_b_block(races, quotes, b_trades, cash, pos):
