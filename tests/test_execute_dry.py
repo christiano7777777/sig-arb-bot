@@ -67,7 +67,7 @@ class FakeClient:
 
 def make_runner(fake, min_edge=0.005, exposure=None, capital=50_000, reserve=50_000, race_cap=5_000,
                 denylist=(), extra=False, b_enabled=False, maker=False, d_enabled=False, a_cap=None,
-                cash_split=None):
+                cash_split=None, small_frac=None):
     # pin every setting the tests rely on, so editing config.py cannot silently change a test
     config.MIN_EDGE, config.MAX_UNHEDGED_EXPOSURE = min_edge, exposure
     config.MAX_CAPITAL_PER_RUN, config.RESERVE, config.PER_RACE_CAP = capital, reserve, race_cap
@@ -80,6 +80,7 @@ def make_runner(fake, min_edge=0.005, exposure=None, capital=50_000, reserve=50_
     config.D_ENABLED = d_enabled
     config.A_CAPITAL_CAP = a_cap
     config.CASH_SPLIT = cash_split
+    config.A_SMALL_EDGE, config.A_SMALL_FRAC = 0.01, small_frac
     config.C_LIMIT, config.C_SKEW, config.C_SKEW_MAX, config.C_QUOTE_EDGE, config.C_CLIP = 2_000, 0.10, 0.25, 0.02, 500
     config.C_EXTRA_RACES = 5
     config.POSITIONS_REFRESH_S, config.BULK_REFRESH_S = 30, 30
@@ -1125,6 +1126,53 @@ def test_unequal_legs_still_halt_outside_b_races():
         assert False, "expected Halt"
     except execute.Halt:
         pass
+
+
+# ---- A's small-edge bucket (user, 2026-10-07): >= 20% of A's pairs at cost bought at edge <= 0.01 ----------
+def _deep_held(fake, n):
+    """n pairs of "Held race" at cost 0.94 (outside the bucket); its NO bids sum to 0.02, so it funds no swap."""
+    return {fake.ex_of("Held race", "D"): (-n, 0.47 * n), fake.ex_of("Held race", "R"): (-n, 0.47 * n)}
+
+
+def _buy_races(fake, r):
+    return [next(n for n in ("Big race", "Small race") if b["legs"][0]["exchangeId"] == fake.ex_of(n, "D"))
+            for _, b in r.sent if b["legs"][0]["action"] == "buy"]
+
+
+def test_small_edge_shortfall_math():
+    f = execute.Runner.a_small_shortfall
+    config.A_SMALL_FRAC = 0.2
+    assert abs(f(0, 1_000) - 250) < 1e-9          # (0 + 250) / (1000 + 250) = 20%
+    assert abs(f(100, 1_000) - 125) < 1e-9
+    assert f(200, 1_000) == 0 and f(500, 1_000) == 0 and f(0, 0) == 0
+    config.A_SMALL_FRAC = None
+    assert f(0, 1_000) == 0                       # rule off
+
+
+def test_bucket_below_target_cash_goes_to_small_edge_only():
+    fake = FakeClient({"Big race": EDGE_02, "Small race": EDGE_01, "Held race": NO_EDGE}, balance=1_000 + 600)
+    fake.held = _deep_held(fake, 10_000)          # bucket 0% of 9,400 -> short 2,350 > 600 room
+    r = make_runner(fake, reserve=1_000, small_frac=0.2)
+    r.poll()
+    assert _buy_races(fake, r) == ["Small race"]                       # the 0.02 edge waits (swap-only)
+
+
+def test_bucket_refill_spends_at_most_the_shortfall():
+    fake = FakeClient({"Big race": EDGE_02, "Small race": EDGE_01, "Held race": NO_EDGE}, balance=1_000 + 600)
+    fake.held = _deep_held(fake, 1_000)           # 940 at cost -> short 235 < 600 room
+    r = make_runner(fake, reserve=1_000, small_frac=0.2)
+    r.poll()
+    buys = [b for _, b in r.sent if b["legs"][0]["action"] == "buy"]
+    assert _buy_races(fake, r) == ["Small race"]
+    assert buys[0]["legs"][0]["quantity"] * sum(l["price"] for l in buys[0]["legs"]) <= 235 + 1e-6
+
+
+def test_bucket_at_target_higher_edge_first_as_before():
+    fake = FakeClient({"Big race": EDGE_02, "Small race": EDGE_01, "Held race": NO_EDGE}, balance=1_000 + 600)
+    fake.held = held_pairs(fake, "Held race", 10_000)   # cost 0.99 -> 100% in the bucket
+    r = make_runner(fake, reserve=1_000, small_frac=0.2)
+    r.poll()
+    assert _buy_races(fake, r)[0] == "Big race"
 
 
 if __name__ == "__main__":

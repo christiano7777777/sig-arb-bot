@@ -98,6 +98,7 @@ class Runner:
         self._no_swap = {}                            # swap attempts that found nothing (see poll)
         self._a_cost = None                           # A's holdings at cost this poll (A_CAPITAL_CAP)
         self._swaps = []                              # times of recent swap attempts (ROTATE_MAX_PER_MIN)
+        self._a_room_cap = None                       # cap on A's cash room while the small-edge bucket refills
         if getattr(config, "REALTIME_ENABLED", False):
             self.feed = Feed(SusqClient(), self.tour["id"])    # own client: the token mint is its only call
             self.feed.start()
@@ -282,9 +283,15 @@ class Runner:
                 exits.append((sum(1 - x for x in asks), b))
         entries.sort(key=lambda t: -t[0])                            # higher edge first
         exits = [b for _, b in sorted(exits, key=lambda t: -t[0])]  # best sell price first
+        small_cost, a_cost = self.a_small_bucket(held)
+        short = self.a_small_shortfall(small_cost, a_cost)
+        if short > 0:   # bucket below target: small-edge entries first, the rest swap-only (A_SMALL_FRAC)
+            entries = ([t for t in entries if t[0] <= config.A_SMALL_EDGE + 1e-9]
+                       + [t for t in entries if t[0] > config.A_SMALL_EDGE + 1e-9])
         print(f"{time.strftime('%H:%M:%S')}  {len(self.baskets)} races: "
               f"{len(entries)} entry signal(s) {[f'{b.name} {e:.3f}' for e, b in entries]}, "
-              f"{len(exits)} exit signal(s) {[b.name for b in exits]}")
+              f"{len(exits)} exit signal(s) {[b.name for b in exits]}"
+              + (f", small-edge bucket {small_cost / a_cost:.1%} of A (short {short:.0f})" if a_cost > 0 else ""))
         # 1) every exit, best price first: exits are never delayed by entry work
         for b in exits:
             if STOP_FILE.exists():
@@ -293,7 +300,7 @@ class Runner:
         # 2) a few entries, highest edge first. Once one is out of budget, the rest are too
         #    (cash does not grow during entries), so they go straight to the swap queue.
         blocked, tried = [], 0
-        for _, b in entries:
+        for edge, b in entries:
             if b in exits:
                 continue
             if STOP_FILE.exists():
@@ -303,15 +310,26 @@ class Runner:
                 continue
             if tried >= config.MAX_ENTRIES_PER_POLL:
                 break
-            if self.out_of_budget(self.top_edge(q, b)):        # out of budget: no book reads needed
-                blocked.append(b)
+            # small-edge bucket below target: cash only for small-edge entries, at most the shortfall
+            # (orders re-read positions into self._pos, so several entries in one poll cannot overshoot it)
+            short = self.a_small_shortfall(*self.a_small_bucket(self._pos if self._pos is not None else held))
+            if short > 0 and edge > config.A_SMALL_EDGE + 1e-9:
+                blocked.append(b)                                    # bigger edges: swaps only
                 continue
-            tried += 1
-            b.try_once()
+            self._a_room_cap = short if short > 0 else None
+            try:
+                if self.out_of_budget(self.top_edge(q, b)):    # out of budget: no book reads needed
+                    blocked.append(b)
+                    continue
+                tried += 1
+                b.try_once()
+            finally:
+                self._a_room_cap = None
             if b.cash_blocked:
                 blocked.append(b)
         if blocked:
             print(f"  out of budget (A room {self.cash_room():.2f}) for {len(blocked)} race(s)")
+            blocked.sort(key=lambda b: -(self.top_edge(q, b) or 0))  # swaps: highest edge first
         # 3) a few swaps, highest edge first
         if config.ROTATE_ENABLED:
             done = 0
@@ -376,6 +394,32 @@ class Runner:
                 total += pairs * sum(l["cost"] / max(l.get("raw_no", l["no"]), 1e-9) for l in legs)
         return total
 
+    def a_small_bucket(self, held=None):
+        """(small, total): A's pairs at cost in races whose average pair cost is >= 1 - A_SMALL_EDGE, and in all
+        races (same pairs as a_holdings_cost). A race is in the bucket or not as a whole (average of its lots)."""
+        held = held if held is not None else self.positions(fresh=False)
+        small = total = 0.0
+        for b in self.baskets:
+            legs = [held.get(e) for e in b.ex]
+            if None in legs:
+                continue
+            pairs = min(l["no"] for l in legs)
+            if pairs > 0:
+                per_pair = sum(l["cost"] / max(l.get("raw_no", l["no"]), 1e-9) for l in legs)
+                total += pairs * per_pair
+                if per_pair >= 1.0 - config.A_SMALL_EDGE - 1e-9:
+                    small += pairs * per_pair
+        return small, total
+
+    @staticmethod
+    def a_small_shortfall(small, total):
+        """Cash to put into small-edge pairs to bring the bucket back to A_SMALL_FRAC of A's pairs at cost:
+        x with (small + x) / (total + x) = frac. 0 when at/above target or the rule is off."""
+        frac = getattr(config, "A_SMALL_FRAC", None)
+        if not frac or total <= 0:
+            return 0.0
+        return max(0.0, (frac * total - small) / (1.0 - frac))
+
     def cash_room(self):
         """Core budget for strategy A's new pairs.
         With CASH_SPLIT: A's share of the free cash (split["A"]; without an "A" key, whatever the others
@@ -385,9 +429,12 @@ class Runner:
         cap = getattr(config, "A_CAPITAL_CAP", None)
         split = getattr(config, "CASH_SPLIT", None) or {}
         if not split and cap is None:
-            return self.cached_balance() - config.RESERVE
+            room = self.cached_balance() - config.RESERVE
+            return room if self._a_room_cap is None else min(room, self._a_room_cap)
         a_share = split["A"] if "A" in split else 1.0 - sum(v for k, v in split.items() if k != "A")
         room = self.free_cash() * a_share
+        if self._a_room_cap is not None:          # small-edge bucket refill: at most the shortfall
+            room = min(room, self._a_room_cap)
         if cap is not None:
             if self._a_cost is None:
                 self._a_cost = self.a_holdings_cost()

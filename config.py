@@ -71,6 +71,14 @@ ROTATE_ENTRY_EDGE = MIN_EDGE  # user, 2026-10-04: swap whenever the swap itself 
 ROTATE_MIN_GAIN = 0.001   # user, 2026-10-04 (on the 0.005 tick this equals any gain > 0)
 ROTATE_TRIGGER_CASH = 50     # "out of budget" = less than this above the reserve
 
+# Small-edge bucket (user, 2026-10-07): keep >= A_SMALL_FRAC of A's pairs (at cost) in races whose average
+# pair cost is >= 1 - A_SMALL_EDGE (bought at an edge <= 0.01). They sell near 1, so swaps (cheapest to
+# exit first) fund new edges from them cheaply, for faster rotation. While the bucket is below target,
+# A's new cash buys only small-edge entries, at most the shortfall; bigger edges are swap-only. Swaps may
+# sell the bucket (a target, not a floor); it refills from freed cash only, never by swapping deep pairs in.
+A_SMALL_EDGE = 0.01
+A_SMALL_FRAC = 0.20          # None = off
+
 # Exits are immediate (user, 2026-10-04): each poll runs ALL exits first, then only a few entries and
 # swaps, so the next exit check is never more than a few seconds away.
 MAX_ENTRIES_PER_POLL = 4
