@@ -63,18 +63,21 @@
   .m-holding { color: var(--accent); } .m-closing { color: var(--warn); } .m-left { color: var(--muted); }
   .strat { color: var(--muted); font-size: 13px; margin: 4px 0 12px; }
   :root { --s4: #7b4fd0; } @media (prefers-color-scheme: dark) { :root { --s4: #a98bf0; } }
+  :root { --s5: #b8327f; } @media (prefers-color-scheme: dark) { :root { --s5: #e27ab8; } }
   .tabs { display: flex; gap: 6px; flex-wrap: wrap; margin: 4px 0 16px; border-bottom: 1px solid var(--line); }
   .tabs button { font: inherit; font-size: 14px; padding: 8px 12px; border: 0; background: transparent; color: var(--muted);
                  cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; }
   .tabs button[aria-selected="true"] { color: var(--text); border-bottom-color: var(--text); font-weight: 600; }
   .badge { display: inline-block; min-width: 18px; padding: 0 5px; border-radius: 5px; font-size: 11px; font-weight: 700;
            color: #fff; text-align: center; line-height: 18px; vertical-align: 1px; }
-  .ba { background: var(--s1); } .bb { background: var(--s3); } .bm { background: var(--s4); } .bd { background: var(--s2); }
-  .split { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+  .ba { background: var(--s1); } .bb { background: var(--s3); } .bm { background: var(--s4); } .bd { background: var(--s2); } .be { background: var(--s5); }
+  .split { display: grid; grid-template-columns: repeat(auto-fit, minmax(175px, 1fr)); gap: 12px; }
   .panel { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
   .panel.pa { border-top: 3px solid var(--s1); } .panel.pb { border-top: 3px solid var(--s3); }
   .panel.pm { border-top: 3px solid var(--s4); } .panel.pd { border-top: 3px solid var(--s2); }
-  .panel .cards { margin: 8px 0 0; } .panel .card { border: 0; padding: 6px 2px; }
+  .panel.pe { border-top: 3px solid var(--s5); }
+  .k-signal { color: var(--s5); } .k-fill { font-weight: 600; } .st-signal { color: var(--s5); font-weight: 600; }
+  .panel .cards { margin: 8px 0 0; grid-template-columns: 1fr; } .panel .card { border: 0; padding: 6px 2px; }
   .ptitle { font-weight: 650; } .ptitle .n { font-weight: 400; color: var(--muted); font-size: 12px; margin-left: 6px; }
 </style>
 </head>
@@ -89,6 +92,7 @@
     <button role="tab" data-tab="m"><span class="badge bm">B</span> Pair maker</button>
     <button role="tab" data-tab="b"><span class="badge bb">C</span> Kalshi market making</button>
     <button role="tab" data-tab="d"><span class="badge bd">D</span> Senate stat arb</button>
+    <button role="tab" data-tab="e"><span class="badge be">E</span> Kalshi breakout</button>
   </div>
 
   <section data-panel="overview">
@@ -115,6 +119,8 @@
         <div class="cards" id="sumB"></div></div>
       <div class="panel pd"><div class="ptitle"><span class="badge bd">D</span> Senate stat arb <span class="n">delta-hedged</span></div>
         <div class="cards" id="sumD"></div></div>
+      <div class="panel pe"><div class="ptitle"><span class="badge be">E</span> Kalshi breakout <span class="n">own 10k, directional</span></div>
+        <div class="cards" id="sumE"></div></div>
     </div>
     <p class="note" id="recon"></p>
   </section>
@@ -261,6 +267,51 @@
       </table>
     </div>
   </section>
+
+  <section data-panel="e" hidden>
+    <p class="strat" id="eintro"><span class="badge be">E</span> Buys a leg when its Kalshi price jumps and SUSQ has not followed yet;
+      sells when SUSQ catches up (back to its usual gap to Kalshi) or Kalshi gives back half the jump; otherwise holds.</p>
+    <h2>E Kalshi breakout equity <span class="n">(P&amp;L since E went live)</span></h2>
+    <div class="chartcard" style="margin-bottom:18px">
+      <div class="winbar" id="wE" role="group" aria-label="Time window">
+        <button data-w="1">1h</button><button data-w="6">6h</button><button data-w="24">24h</button>
+        <button data-w="168">7d</button><button data-w="0">All</button>
+      </div>
+      <div class="legend" id="lE"></div>
+      <div class="chartwrap"><svg id="cE" style="width:100%;height:220px;display:block;touch-action:pan-y" role="img" aria-label="E Kalshi breakout P&amp;L over time"></svg><div class="tip" id="tE" hidden></div></div>
+      <p class="note" id="nE" style="margin:4px 0 0"></p>
+    </div>
+
+    <div class="cards" id="ecards"></div>
+    <h2>E holds</h2>
+    <div class="tablewrap" style="margin-bottom:18px">
+      <table>
+        <thead><tr><th>Race</th><th>Leg</th><th>Shares</th><th>Avg cost</th><th>SUSQ bid / ask</th><th>Kalshi fair</th><th>P&amp;L at bid</th></tr></thead>
+        <tbody id="erows"></tbody>
+      </table>
+    </div>
+    <h2>Watch list <span class="n" id="ewatchnote">(legs whose Kalshi price moved most in the last minute)</span></h2>
+    <div class="tablewrap" style="margin-bottom:18px">
+      <table>
+        <thead><tr><th>Race</th><th>Leg</th><th>Kalshi move</th><th>Kalshi fair</th><th>Usual gap</th><th>Buy limit</th><th>SUSQ ask</th><th>Status</th></tr></thead>
+        <tbody id="ewatch"></tbody>
+      </table>
+    </div>
+    <h2>E events <span class="n">(signals, fills, exits since the bot's last restart)</span></h2>
+    <div class="tablewrap" style="margin-bottom:18px">
+      <table>
+        <thead><tr><th>Time</th><th>Kind</th><th>Race</th><th>Leg</th><th>Detail</th></tr></thead>
+        <tbody id="eevents"></tbody>
+      </table>
+    </div>
+    <h2>E trades</h2>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Time</th><th>Kind</th><th>Side</th><th>Race</th><th>Leg</th><th>Shares</th><th>Price</th></tr></thead>
+        <tbody id="erecent"></tbody>
+      </table>
+    </div>
+  </section>
   <p class="note">Data refreshes every minute (GitHub's file cache can add up to ~5 minutes).</p>
 </main>
 <script>
@@ -297,6 +348,7 @@ function render(d) {
   snap = d;
   renderB(d.b);       // uses snap
   renderD(d.d);
+  renderE(d.e);
   const a24 = (d.activity || {})["24h"] || {};
   const locked = d.rows.reduce((s, r) => s + (r.locked || 0), 0);
   document.getElementById("sumA").innerHTML =
@@ -390,6 +442,61 @@ function renderB(b) {
     || `<tr><td colspan="6" class="n">No pair-maker fills since order tagging began.</td></tr>`;
 }
 
+function renderE(e) {
+  const sum = document.getElementById("sumE");
+  if (!e) {     // undefined: snapshot from before E existed (until the bot's next run); null: E is switched off
+    const c = e === undefined ? card("Strategy E", "starting", "data from the bot's next run") : card("Strategy E", "off", "");
+    sum.innerHTML = c;
+    document.getElementById("ecards").innerHTML = c;
+    return;
+  }
+  const pnl = e.pnl_bid, held = e.holdings_cost;
+  sum.innerHTML =
+    card("E cash", fmt(e.cash, 0), `allotment ${fmt(e.allotment, 0)} of ${fmt(e.capital, 0)} (+${fmt(e.fill_per_hour, 0)}/h)`) +
+    card("Held at cost", fmt(held, 0), `${e.rows.length} leg${e.rows.length === 1 ? "" : "s"} · ${e.trades} trades`) +
+    card("E P&L", (pnl >= 0 ? "+" : "") + fmt(pnl), "at SUSQ bids", pnl >= 0 ? "pos" : "neg");
+  document.getElementById("ecards").innerHTML =
+    card("E cash", fmt(e.cash), `allotment ${fmt(e.allotment, 0)} of ${fmt(e.capital, 0)}, +${fmt(e.fill_per_hour, 0)}/h since ${new Date(e.since).toLocaleString()}`) +
+    card("Held at cost", fmt(held), `${e.rows.length} leg${e.rows.length === 1 ? "" : "s"}`) +
+    card("P&L at SUSQ bids", (pnl >= 0 ? "+" : "") + fmt(pnl), "if everything were sold now", pnl >= 0 ? "pos" : "neg") +
+    card("P&L at Kalshi fair", (e.pnl_fair >= 0 ? "+" : "") + fmt(e.pnl_fair), e.fair_complete ? "held legs at Kalshi's price" : "some legs at cost (no Kalshi price)",
+         e.pnl_fair >= 0 ? "pos" : "neg") +
+    card("Trades", fmt(e.trades, 0), "fills since E went live");
+  document.getElementById("erows").innerHTML = e.rows.length ? e.rows.map(r =>
+    `<tr><td>${esc(r.race)}</td><td>${r.leg === "D" ? "Dem" : "Rep"}</td><td>${fmt(r.qty, 0)}</td><td>${fmt(r.avg_cost, 4)}</td>
+      <td>${fmt(r.bid, 3)} / ${fmt(r.ask, 3)}</td><td>${fmt(r.fair, 3)}</td>
+      <td class="${r.pnl_bid >= 0 ? "pos" : "neg"}">${(r.pnl_bid >= 0 ? "+" : "") + fmt(r.pnl_bid)}</td></tr>`).join("")
+    : `<tr><td colspan="7" class="n">Nothing held.</td></tr>`;
+  document.getElementById("erecent").innerHTML = e.recent.length ? e.recent.map(t =>
+    `<tr><td>${new Date(t.ts).toLocaleString()}</td><td>${esc(t.kind)}</td><td>${esc(t.side)}</td><td>${esc(t.race)}</td>
+      <td>${esc(t.party)}</td><td>${fmt(t.qty, 0)}</td><td>${fmt(t.price, 4)}</td></tr>`).join("")
+    : `<tr><td colspan="7" class="n">No E trades yet.</td></tr>`;
+}
+
+function renderELive() {
+  const w = document.getElementById("ewatch"), ev = document.getElementById("eevents");
+  if (!elive) {
+    w.innerHTML = `<tr><td colspan="8" class="n">No live data from E yet (written by the bot every 10 s).</td></tr>`;
+    ev.innerHTML = "";
+    return;
+  }
+  const p = elive.params || {};
+  document.getElementById("eintro").innerHTML = `<span class="badge be">E</span> Buys a leg when its Kalshi price rises at least
+    ${fmt(p.jump, 2)} within ${fmt(p.window_s, 0)} s and SUSQ has not followed: at or below Kalshi fair − the race's usual gap
+    (median over ${fmt(p.baseline_h, 0)} h) − ${fmt(p.margin, 2)}. Sells when SUSQ is back at its usual gap to Kalshi, or Kalshi
+    gives back half the jump; otherwise holds (to settlement). Needs ${fmt(p.min_history_min, 0)} min of history after a restart
+    (running ${fmt(elive.running_min, 0)} min). Own ledger and cash: independent of A.`;
+  document.getElementById("ewatchnote").textContent = `(legs whose Kalshi price moved most in the last minute · updated ${new Date(elive.updated).toLocaleTimeString()})`;
+  w.innerHTML = elive.watch.map(r =>
+    `<tr><td>${esc(r.race)}</td><td>${r.leg === "D" ? "Dem" : "Rep"}</td><td>${(r.move >= 0 ? "+" : "") + fmt(r.move, 3)}</td>
+      <td>${fmt(r.fair, 3)}</td><td>${r.usual_gap == null ? "–" : (r.usual_gap >= 0 ? "+" : "") + fmt(r.usual_gap, 3)}</td>
+      <td>${fmt(r.limit, 3)}</td><td>${fmt(r.ask, 3)}</td><td class="${r.status === "signal" ? "st-signal" : "n"}">${esc(r.status)}</td></tr>`).join("");
+  ev.innerHTML = elive.events.length ? elive.events.map(x =>
+    `<tr><td>${new Date(x.t).toLocaleString()}</td><td class="k-${x.kind}">${esc(x.kind)}</td><td>${esc(x.race)}</td>
+      <td>${x.leg === "D" ? "Dem" : "Rep"}</td><td>${esc(x.text)}</td></tr>`).join("")
+    : `<tr><td colspan="5" class="n">No signals since the last restart.</td></tr>`;
+}
+
 function renderD(d) {
   if (!d) { document.getElementById("dcards").innerHTML = card("Strategy D", "off", ""); return; }
   if (d.error) { document.getElementById("dcards").innerHTML = card("Strategy D", "–", esc(d.error)); return; }
@@ -451,6 +558,8 @@ function renderActivity() {
 
 // ---------- equity curve (inline SVG, one y-axis: both series are SUSQies) ----------
 const HIST = SRC.replace("snapshot.json", "history.json");
+const ELIVE = SRC.replace("snapshot.json", "e.json");      // strategy E's live view, written by the bot every 10 s
+let elive = null;
 let hist = [], initial = 100000;
 const SERIES = [
   { key: "settle", name: "Value at settlement (pairs pay 1; C and D positions at cost)", color: "var(--s1)" },
@@ -558,10 +667,10 @@ function drawChart() {
   svg.onmousemove = move; svg.ontouchmove = move; svg.onmouseleave = leave; svg.ontouchend = leave;
 }
 // ---------- one equity curve per strategy (in its own tab, own time window) ----------
-const SCOL = { A: "var(--s1)", B: "var(--s4)", C: "var(--s3)", D: "var(--s2)" };
-const SNAME = { A: "A arbitrage", B: "B pair maker", C: "C Kalshi market making", D: "D Senate stat arb" };
-const sWin = { A: 0, B: 0, C: 0, D: 0 };
-["A", "B", "C", "D"].forEach(k => document.getElementById("w" + k).addEventListener("click", ev => {
+const SCOL = { A: "var(--s1)", B: "var(--s4)", C: "var(--s3)", D: "var(--s2)", E: "var(--s5)" };
+const SNAME = { A: "A arbitrage", B: "B pair maker", C: "C Kalshi market making", D: "D Senate stat arb", E: "E Kalshi breakout" };
+const sWin = { A: 0, B: 0, C: 0, D: 0, E: 0 };
+["A", "B", "C", "D", "E"].forEach(k => document.getElementById("w" + k).addEventListener("click", ev => {
   const btn = ev.target.closest("button"); if (!btn) return;
   sWin[k] = +btn.dataset.w; drawStrat(k);
 }));
@@ -573,6 +682,10 @@ function stratPoints(k) {
   const firstLive = live.length ? new Date(live[0].t).getTime() : Infinity;
   let pts = ((snap && snap.strategy_series) || []).filter(p => new Date(p.t).getTime() < firstLive)
     .map(p => ({ t: p.t, v: p[k] })).concat(live);
+  if (k === "E" && snap && snap.e && snap.e.since) {     // E's curve starts when E went live (0 before)
+    const t0 = new Date(snap.e.since).getTime();
+    pts = [{ t: snap.e.since, v: 0 }].concat(pts.filter(p => new Date(p.t).getTime() > t0));
+  }
   if (pts.length && sWin[k]) {
     const end = new Date(pts[pts.length - 1].t).getTime();
     pts = pts.filter(p => new Date(p.t).getTime() >= end - sWin[k] * 3600e3);
@@ -591,6 +704,7 @@ function drawStrat(k) {
   document.getElementById("n" + k).textContent = k === "A"
     ? "Its own trades only: cash flow + what it holds, a pair paying 1 and single legs at cost (like the main curve)." +
       (((snap && snap.strategy_now) || {}).U ? ` Unattributed trades (no matching tagged fill): ${fmt(snap.strategy_now.U)}.` : "")
+    : k === "E" ? "E's own trades only (own ledger and cash): cash flow + what it holds at the current SUSQ market value (mid), since E went live."
     : `Its own trades only: cash flow + what it holds at the current SUSQ market value (mid), recorded from ${liveFrom ? new Date(liveFrom).toLocaleString() : "now on"}; before that at cost.`;
   if (k === "A" && loading()) {
     const from = pts.length ? new Date(pts[0].t).toLocaleString() : "now";
@@ -632,7 +746,7 @@ function drawStrat(k) {
   };
   svg.onmouseleave = () => { tip.hidden = true; cross.setAttribute("visibility", "hidden"); };
 }
-function drawAllStrats() { ["A", "B", "C", "D"].forEach(drawStrat); }
+function drawAllStrats() { ["A", "B", "C", "D", "E"].forEach(drawStrat); }
 
 document.getElementById("winbar").addEventListener("click", ev => {
   const btn = ev.target.closest("button");
@@ -644,7 +758,7 @@ window.addEventListener("resize", () => { drawChart(); drawAllStrats(); });
 
 // ---------- tabs ----------
 function showTab(t) {
-  if (!["overview", "a", "m", "b", "d"].includes(t)) t = "overview";
+  if (!["overview", "a", "m", "b", "d", "e"].includes(t)) t = "overview";
   document.querySelectorAll(".tabs button").forEach(b => b.setAttribute("aria-selected", String(b.dataset.tab === t)));
   document.querySelectorAll("section[data-panel]").forEach(s => s.hidden = s.dataset.panel !== t);
   try { localStorage.setItem("tab", t); } catch (e) { /* storage may be blocked */ }
@@ -674,6 +788,11 @@ async function load() {
     const h = await fetch(HIST + "?t=" + Date.now(), { cache: "no-store" });
     if (h.ok) hist = await h.json();
   } catch (e) { /* curve keeps its last data */ }
+  try {
+    const r = await fetch(ELIVE + "?t=" + Date.now(), { cache: "no-store" });
+    elive = r.ok ? await r.json() : null;
+  } catch (e) { elive = null; }
+  renderELive();
   renderActivity();
   drawChart();
   drawAllStrats();

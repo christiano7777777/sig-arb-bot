@@ -71,12 +71,18 @@ def build(c):
     for f in attrib["D"]:
         d_ledger[f["ex"]] = d_ledger.get(f["ex"], 0) + (f["qty"] if f["side"] == "BUY" else -f["qty"])
     d_ledger = {e: q for e, q in d_ledger.items() if q > 0}
+    e_fills = [f for f in attrib["E"] if f["ts"][:19] >= getattr(config, "E_LIVE_SINCE", "2100")[:19]]
+    e_ledger = {}                                    # strategy E's NO shares per exchange (from its own fills)
+    for f in e_fills:
+        e_ledger[f["ex"]] = e_ledger.get(f["ex"], 0) + (f["qty"] if f["side"] == "BUY" else -f["qty"])
+    e_ledger = {e: q for e, q in e_ledger.items() if q > 0}
     races = defaultdict(dict)
     for p in pos["positions"]:
-        if p["exchangeId"] in d_ledger:              # A/B/C views exclude D (its block shows them)
-            share = d_ledger[p["exchangeId"]] / max(-p["quantity"], 1)
-            p = {**p, "quantity": min(p["quantity"] + d_ledger[p["exchangeId"]], 0),
-                 "costBasis": (p.get("costBasis") or 0) * max(0.0, 1 - share)}
+        for led in (d_ledger, e_ledger):             # A/B/C views exclude D and E (their blocks show them)
+            if p["exchangeId"] in led:
+                share = led[p["exchangeId"]] / max(-p["quantity"], 1)
+                p = {**p, "quantity": min(p["quantity"] + led[p["exchangeId"]], 0),
+                     "costBasis": (p.get("costBasis") or 0) * max(0.0, 1 - share)}
         if p["quantity"] and not p["settled"]:
             g = TITLE.match(p["marketTitle"].strip())
             name, party = (g.group(2), g.group(1)) if g else (p["marketTitle"], p["exchangeId"])
@@ -144,11 +150,15 @@ def build(c):
     s_series, s_state = strategy_series(fetch_all_trades(c), attrib)
     s_now = strategy_now(c, t["id"], s_series, s_state, legs_of, quotes)
     d_fair_minus_cost = ((d_view or {}).get("holdings_fair") or 0.0) - d_cost if d_view and "holdings_fair" in d_view else 0.0
+    e_view = strategy_e_block(c, t["id"], legs_of, e_ledger, e_fills)
+    e_cost = (e_view or {}).get("holdings_cost") or 0.0
+    e_fair_minus_cost = ((e_view or {}).get("holdings_fair") or e_cost) - e_cost if e_view else 0.0
     return {
         "strategy_series": s_series,             # since the Cup began: A pairs 1 / legs at cost; B, C, D at cost (past)
         "strategy_now": s_now,                   # now: A as above; B, C, D at the current SUSQ market value (mid)
         "history_complete": dict(SYNC),          # fills/trades loaded back to the start (else the split is partial)
         "d": d_view,
+        "e": e_view,
         "b": b,
         "activity": activity,
         "recent": recent,
@@ -168,9 +178,10 @@ def build(c):
         "cost_basis": round(sum(p["costBasis"] for legs in races.values() for p in legs.values()), 2),
         # every NO+NO pair pays 1; unpaired shares (legs briefly unequal) at their cost
         # D's shares are taken out of the A/B/C views, so they are added back here (at cost, like C's positions)
-        "value_at_settlement": round(cash + total_pairs + sum(r["unpaired_value"] for r in rows) + d_cost, 2),
-        "value_fair": round(cash + total_pairs + sum(r["unpaired_value"] for r in rows) + d_cost
-                            + ((b or {}).get("leftover_fair_minus_cost") or 0) + d_fair_minus_cost, 2),
+        # E's shares too (2026-10-07): out of the A/B/C views, back in here at cost / at Kalshi fair
+        "value_at_settlement": round(cash + total_pairs + sum(r["unpaired_value"] for r in rows) + d_cost + e_cost, 2),
+        "value_fair": round(cash + total_pairs + sum(r["unpaired_value"] for r in rows) + d_cost + e_cost
+                            + ((b or {}).get("leftover_fair_minus_cost") or 0) + d_fair_minus_cost + e_fair_minus_cost, 2),
         "mark_to_market": round(cash + pos["summary"]["totalMarketValue"], 2),
         "warnings": warnings,
         "rows": rows,
@@ -535,6 +546,43 @@ def strategy_d_block(c, quotes, legs_of, ledger, fills):
             "capital": config.D_CAPITAL, "band": config.D_BAND_FRAC, "races": rows,
             "pnl_bid": round(flow + bid_val, 2), "pnl_fair": round(flow + fair_val, 2),
             "holdings_cost": round(cost_val, 2), "holdings_fair": round(fair_val, 2),
+            "recent": [{k: f[k] for k in ("ts", "race", "party", "side", "qty", "price", "kind")} for f in fills[-25:][::-1]]}
+
+
+def strategy_e_block(c, tid, legs_of, ledger, fills):
+    """Strategy E (Kalshi-jump breakout) from its own tagged fills: allotment and cash, holdings at cost / SUSQ
+    bid / Kalshi fair, P&L, recent trades. The bot's live view (signals, watch list) is in e.json."""
+    if not getattr(config, "E_ENABLED", False):
+        return None
+    since = datetime.fromisoformat(config.E_LIVE_SINCE)
+    hours = max(0.0, (datetime.now(timezone.utc) - since).total_seconds() / 3600)
+    allot = min(config.E_CAPITAL, config.E_FILL_PER_HOUR * hours)
+    flow = sum((-1 if f["side"] == "BUY" else 1) * f["qty"] * (f["price"] or 0) for f in fills)
+    cost = d_cost_basis(fills)                       # same average-cost rule as D's
+    race_of = {e: (race, x) for race, legs in legs_of.items() for x, e in legs.items()}
+    quotes = {}
+    if ledger:
+        r = c.get("/exchanges/prices", ids=",".join(ledger), tournamentId=tid)
+        quotes = {x["exchangeId"]: x for x in r["data"]}
+    rows, bid_val, fair_val, fair_ok = [], 0.0, 0.0, True
+    for e, n in ledger.items():
+        race, leg = race_of.get(e, ("?", "?"))
+        x = quotes.get(e, {})
+        bid = round(1 - x["bestAsk"], 4) if x.get("bestAsk") is not None else None
+        ask = round(1 - x["bestBid"], 4) if x.get("bestBid") is not None else None
+        fair = None
+        if race in config.B_RACES:
+            k = kalshi.fair(config.B_RACES[race], 1.0)
+            fair = round(1 - k["p"][leg], 4) if k.get("ok") else None
+        fair_ok = fair_ok and fair is not None
+        bid_val += n * (bid or 0)
+        fair_val += n * (fair if fair is not None else cost.get(e, 0) / n)
+        rows.append({"race": race, "leg": leg, "qty": n, "avg_cost": round(cost.get(e, 0) / n, 4) if n else None,
+                     "bid": bid, "ask": ask, "fair": fair, "pnl_bid": round(n * (bid or 0) - cost.get(e, 0), 2)})
+    return {"allotment": round(allot, 2), "cash": round(max(0.0, allot + flow), 2), "capital": config.E_CAPITAL,
+            "fill_per_hour": config.E_FILL_PER_HOUR, "since": config.E_LIVE_SINCE, "trades": len(fills),
+            "holdings_cost": round(sum(cost.values()), 2), "holdings_fair": round(fair_val, 2), "fair_complete": fair_ok,
+            "pnl_bid": round(flow + bid_val, 2), "pnl_fair": round(flow + fair_val, 2), "rows": rows,
             "recent": [{k: f[k] for k in ("ts", "race", "party", "side", "qty", "price", "kind")} for f in fills[-25:][::-1]]}
 
 

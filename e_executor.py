@@ -9,6 +9,7 @@ up slowly instead of being spent by A first. Ledger and cash flow are rebuilt at
 "caught up", with the usual gap taken from fresh history.
 Every E_INTERVAL_S, from the Kalshi batch cache (price_recorder) and the SUSQ books the bot already has.
 """
+import json
 import time
 from collections import deque
 from datetime import datetime
@@ -31,6 +32,8 @@ class EExecutor:
         self.flow = 0.0           # E's own cash flow: sells - buys (fill prices after a rebuild, limits in this run)
         self.next_t = 0.0
         self.since = datetime.fromisoformat(config.E_LIVE_SINCE).timestamp()
+        self.events = deque(maxlen=50)    # signals, entries, exits (state/e.json -> dashboard E tab)
+        self.started = time.time()
         print(f"E: {len(self.races)} races, capital {config.E_CAPITAL:,.0f} at {config.E_FILL_PER_HOUR:,.0f}/h "
               f"from {config.E_LIVE_SINCE}")
         self.rebuild()
@@ -94,8 +97,12 @@ class EExecutor:
             he["last_error"] = f"{now_plus(0)} {type(e).__name__}: {e}"[:300]
             print(f"  E: unexpected error, round skipped: {type(e).__name__}: {e}")
 
+    def note(self, race, leg, kind, text):
+        self.events.append({"t": now_plus(0), "race": race, "leg": leg, "kind": kind, "text": text})
+
     def _step(self, q):
         now = time.time()
+        watch = []
         for b in self.races:
             k = kalshi.fair_cached(config.B_RACES[b.name], config.B_MAX_KALSHI_SPREAD)
             if not k["ok"]:
@@ -113,9 +120,42 @@ class EExecutor:
                     sig = strategy_e.signal(list(h), now, fair, ask)
                     if sig is not None:
                         self.enter(b, ex, leg, fair, sig)
+                ref = [f for t, f, m in h if t <= now - config.E_JUMP_WINDOW_S]
+                watch.append((fair - ref[-1] if ref else 0.0, b.name, leg, ex, fair, bid, ask))
                 h.append((now, fair, (bid + ask) / 2 if bid is not None and ask is not None else None))
                 while h and h[0][0] < now - config.E_BASELINE_S - config.E_JUMP_WINDOW_S:
                     h.popleft()
+        self.write_state(now, watch)
+
+    def write_state(self, now, watch):
+        """state/e.json for the dashboard: cash, holdings, recent events, and the legs whose Kalshi price moved
+        most in the last E_JUMP_WINDOW_S with how far each is from a signal."""
+        rows = []
+        for move, race, leg, ex, fair, bid, ask in sorted(watch, key=lambda w: -abs(w[0]))[:15]:
+            h = list(self.hist.get(ex, ()))
+            base = strategy_e.baseline(h, now)
+            limit = strategy_e.down(fair - base - config.E_MARGIN) if base is not None else None
+            hist_min = (now - h[0][0]) / 60 if h else 0.0
+            status = ("held by E" if ex in self.ledger
+                      else f"history {hist_min:.0f}/{config.E_MIN_HISTORY_S / 60:.0f} min" if hist_min < config.E_MIN_HISTORY_S / 60
+                      else f"move below {config.E_JUMP}" if move < config.E_JUMP - 1e-9
+                      else "SUSQ already followed" if limit is None or ask is None or limit < ask - 1e-9
+                      else "signal")
+            rows.append({"race": race, "leg": leg, "move": round(move, 4), "fair": round(fair, 4), "bid": bid, "ask": ask,
+                         "usual_gap": None if base is None else round(base, 4), "limit": limit, "status": status})
+        state = {"updated": now_plus(0), "allotment": round(self.allotment(), 2), "cash": round(self.cash(), 2),
+                 "flow": round(self.flow, 2), "capital": config.E_CAPITAL, "fill_per_hour": config.E_FILL_PER_HOUR,
+                 "since": config.E_LIVE_SINCE, "running_min": round((now - self.started) / 60, 1),
+                 "params": {"jump": config.E_JUMP, "window_s": config.E_JUMP_WINDOW_S, "margin": config.E_MARGIN,
+                            "baseline_h": config.E_BASELINE_S / 3600, "min_history_min": config.E_MIN_HISTORY_S / 60},
+                 "ledger": [{"race": p["race"], "leg": p["leg"], "qty": self.ledger.get(e, 0),
+                             "entry_fair": p["entry_fair"], "usual_gap": p["baseline"]} for e, p in self.pos.items()
+                            if self.ledger.get(e)],
+                 "watch": rows, "events": list(self.events)[::-1]}
+        try:
+            (self.r.state_dir / "e.json").write_text(json.dumps(state), encoding="utf-8")
+        except (OSError, AttributeError):
+            pass
 
     def books(self, ex):
         """NO bids and asks of a leg (others' orders only), best first."""
@@ -129,6 +169,8 @@ class EExecutor:
         qty, worst = strategy_e.size_buy(asks, sig["limit"], cash)
         print(f"  E {b.name}: Kalshi NO_{leg} fair {fair:.3f} (+{sig['jump']:.3f}), usual gap {sig['baseline']:+.3f}, "
               f"SUSQ should go to {sig['target']:.3f}: buy {qty} @ <= {sig['limit']} (E cash {cash:,.0f})")
+        self.note(b.name, leg, "signal", f"Kalshi +{sig['jump']:.3f} to {fair:.3f}; buy {qty} at <= {sig['limit']}"
+                  + ("" if qty else " (nothing on the book at or below the limit)"))
         if qty < 1:
             return
         if self.send(b, ex, leg, "buy", qty, sig["limit"], "entry"):
@@ -144,6 +186,7 @@ class EExecutor:
         bids, _ = self.books(ex)
         qty, worst = strategy_e.size_sell(bids, x["floor"], self.ledger[ex])
         print(f"  E {b.name}: exit NO_{leg} ({x['why']}): Kalshi fair {fair:.3f}, bid {bid}, sell {qty} @ >= {x['floor']}")
+        self.note(b.name, leg, "exit", f"{x['why']}: sell {qty} at >= {x['floor']} (bid {bid}, Kalshi {fair:.3f})")
         if qty >= 1:
             self.send(b, ex, leg, "sell", qty, x["floor"], "exit")
             if ex not in self.ledger:
@@ -176,4 +219,5 @@ class EExecutor:
             self.flow += -traded * price if side == "buy" else traded * price
             print(f"    E traded {traded} {side} @ limit {price} | E holds {self.ledger.get(ex, 0)} NO_{leg}, "
                   f"cash flow {self.flow:,.2f}, E cash {self.cash():,.0f}")
+            self.note(b.name, leg, "fill", f"{side} {traded} at <= {price}; holds {self.ledger.get(ex, 0)}")
         return traded
