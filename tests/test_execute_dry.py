@@ -1,5 +1,6 @@
 """Offline tests of the multi-race executor against a fake API (no network).
 Run: python tests/test_execute_dry.py"""
+import json
 import os
 import sys
 import time
@@ -1506,6 +1507,19 @@ def test_one_sided_leg_in_a_pair_race_sold_only_at_or_above_kalshi_fair():
     assert o["leg"] == "D" and o["qty"] == 5_670 and o["price"] == 0.10
     o = strategy_c.dump(books, {"D": 0.85, "R": 0.15}, {"D": 53_670, "R": 48_000}, gap=0.0)     # fair 0.15 > bid
     assert o is None
+
+
+def test_rotation_state_restored_after_restart_is_written_back_at_once():
+    fake, r = _rot_runner()
+    r.live = True                                   # load_focus only runs live; no orders are sent here
+    saved = {"focus": ["F1 race", "F2 race", "F3 race"], "exiting": "F2 race", "newest": None, "exited": {}, "log": []}
+    r.load_focus = lambda: saved
+    execute.STATE_DIR.mkdir(exist_ok=True)
+    (execute.STATE_DIR / "focus.json").unlink(missing_ok=True)
+    r.focus_update(r.positions(), r.quotes())
+    assert r.exiting == "F2 race"                   # kept, not re-chosen (F1 has the highest bid sum)
+    back = json.loads((execute.STATE_DIR / "focus.json").read_text(encoding="utf-8"))
+    assert back["exiting"] == "F2 race" and "restored" in back["log"][-1]["what"]
 
 
 if __name__ == "__main__":

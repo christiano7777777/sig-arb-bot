@@ -493,6 +493,9 @@ class Runner:
                 self.focus, self.exiting, self.newest = saved["focus"], saved.get("exiting"), saved.get("newest")
                 self.focus_log = saved.get("log", [])
                 self.exited = saved.get("exited", {})
+                # write it back at once: the data branch is rebuilt from local files on every push, so a state
+                # that is only loaded would vanish from it (2026-10-07 17:30) and the next restart would start over
+                self.save_focus(f"restored after a restart (exiting {self.exiting})")
             else:
                 self.focus = sorted(self.a_top_races(held) or [])
                 self.save_focus(f"start: focus {self.focus} (A's {n} largest)")
