@@ -452,11 +452,11 @@ function renderE(e) {
   }
   const pnl = e.pnl_bid, held = e.holdings_cost;
   sum.innerHTML =
-    card("E cash", fmt(e.cash, 0), `allotment ${fmt(e.allotment, 0)} of ${fmt(e.capital, 0)} (+${fmt(e.fill_per_hour, 0)}/h)`) +
+    card("E cash", fmt(e.cash, 0), `allotment ${fmt(e.allotment, 0)} of ${fmt(e.capital, 0)}` + (e.fill_per_hour >= 1e6 ? " (in full)" : ` (+${fmt(e.fill_per_hour, 0)}/h)`)) +
     card("Held at cost", fmt(held, 0), `${e.rows.length} leg${e.rows.length === 1 ? "" : "s"} · ${e.trades} trades`) +
     card("E P&L", (pnl >= 0 ? "+" : "") + fmt(pnl), "at SUSQ bids", pnl >= 0 ? "pos" : "neg");
   document.getElementById("ecards").innerHTML =
-    card("E cash", fmt(e.cash), `allotment ${fmt(e.allotment, 0)} of ${fmt(e.capital, 0)}, +${fmt(e.fill_per_hour, 0)}/h since ${new Date(e.since).toLocaleString()}`) +
+    card("E cash", fmt(e.cash), `allotment ${fmt(e.allotment, 0)} of ${fmt(e.capital, 0)}` + (e.fill_per_hour >= 1e6 ? ", allotted in full: first claim on free cash" : `, +${fmt(e.fill_per_hour, 0)}/h since ${new Date(e.since).toLocaleString()}`)) +
     card("Held at cost", fmt(held), `${e.rows.length} leg${e.rows.length === 1 ? "" : "s"}`) +
     card("P&L at SUSQ bids", (pnl >= 0 ? "+" : "") + fmt(pnl), "if everything were sold now", pnl >= 0 ? "pos" : "neg") +
     card("P&L at Kalshi fair", (e.pnl_fair >= 0 ? "+" : "") + fmt(e.pnl_fair), e.fair_complete ? "held legs at Kalshi's price" : "some legs at cost (no Kalshi price)",
