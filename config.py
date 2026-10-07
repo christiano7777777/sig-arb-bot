@@ -44,7 +44,7 @@ A_CAPITAL_CAP = None         # user, 2026-10-05: no cap on A (was 50,000 at cost
 # exits at >= 1.000 (free). HARD_RESERVE stays untouched so the unequal-fill fix always has cash.
 EXTRA_CAPITAL_ENABLED = False   # user, 2026-10-04: extra tier off; arb buys only with cash above RESERVE
 EXTRA_MIN_EDGE = 0.01      # user, 2026-10-04 (was 0.015): use more of the second 50k
-HARD_RESERVE = 1_000
+HARD_RESERVE = 100            # user, 2026-10-07 (was 1,000): frees ~900 for A; an unequal-fill fix that must buy may lack cash -> halt
 PER_RACE_CAP = None          # no per-race cap (user, 2026-10-04: higher edge gets priority instead)
 MAX_UNHEDGED_EXPOSURE = 500  # worst-case SUSQies on an unpaired leg per attempt (~1% of strategy capital)
 
