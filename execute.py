@@ -99,6 +99,7 @@ class Runner:
         self._a_cost = None                           # A's holdings at cost this poll (A_CAPITAL_CAP)
         self._swaps = []                              # times of recent swap attempts (ROTATE_MAX_PER_MIN)
         self._a_room_cap = None                       # cap on A's cash room while the small-edge bucket refills
+        self._d_paused = False                        # D's cash share goes to A (D_PAUSE_UNTIL_A_SMALL)
         if getattr(config, "REALTIME_ENABLED", False):
             self.feed = Feed(SusqClient(), self.tour["id"])    # own client: the token mint is its only call
             self.feed.start()
@@ -267,6 +268,8 @@ class Runner:
         q = self.quotes()
         held = self.positions(fresh=False)
         self._a_cost = None                       # A's holdings at cost, computed once per poll when needed
+        small_cost, a_cost = self.a_small_bucket(held)
+        self._d_paused = self.d_paused(small_cost, a_cost)
         if self.b is not None:      # strategies B and C first: their buys are worth more than an arb entry
             self.b.step(q, held)
         if self.d is not None:      # strategy D: Senate-control stat arb (own ledger)
@@ -283,7 +286,6 @@ class Runner:
                 exits.append((sum(1 - x for x in asks), b))
         entries.sort(key=lambda t: -t[0])                            # higher edge first
         exits = [b for _, b in sorted(exits, key=lambda t: -t[0])]  # best sell price first
-        small_cost, a_cost = self.a_small_bucket(held)
         short = self.a_small_shortfall(small_cost, a_cost)
         if short > 0:   # bucket below target: small-edge entries first, the rest swap-only (A_SMALL_FRAC)
             entries = ([t for t in entries if t[0] <= config.A_SMALL_EDGE + 1e-9]
@@ -291,7 +293,8 @@ class Runner:
         print(f"{time.strftime('%H:%M:%S')}  {len(self.baskets)} races: "
               f"{len(entries)} entry signal(s) {[f'{b.name} {e:.3f}' for e, b in entries]}, "
               f"{len(exits)} exit signal(s) {[b.name for b in exits]}"
-              + (f", small-edge bucket {small_cost / a_cost:.1%} of A (short {short:.0f})" if a_cost > 0 else ""))
+              + (f", small-edge bucket {small_cost / a_cost:.1%} of A (short {short:.0f})" if a_cost > 0 else "")
+              + (", D paused (its cash share goes to A)" if self._d_paused else ""))
         # 1) every exit, best price first: exits are never delayed by entry work
         for b in exits:
             if STOP_FILE.exists():
@@ -377,6 +380,8 @@ class Runner:
         if not split:                             # no split: all free cash, less every resting buy
             return max(0.0, self.free_cash() - sum(px * qty for (e, side), (px, qty, _, _) in self.quote_live.items()
                                                    if side == "buy"))
+        if s == "D" and self._d_paused:
+            return 0.0                            # D's share goes to A (D_PAUSE_UNTIL_A_SMALL); hedges use free cash
         owner = {"B": "maker", "C": "quote"}.get(s)
         own = sum(px * qty for (e, side), (px, qty, _, o) in self.quote_live.items() if side == "buy" and o == owner)
         return max(0.0, split.get(s, 0.0) * max(self.free_cash(), 0.0) - own)
@@ -411,6 +416,12 @@ class Runner:
                     small += pairs * per_pair
         return small, total
 
+    def d_paused(self, small, total):
+        """True while A's small-edge bucket is below D_PAUSE_UNTIL_A_SMALL of A's pairs at cost (user, 2026-10-07).
+        Only with D running; with no A pairs at all there is no bucket to wait for."""
+        frac = getattr(config, "D_PAUSE_UNTIL_A_SMALL", None)
+        return bool(frac) and self.d is not None and total > 0 and small < frac * total - 1e-9
+
     @staticmethod
     def a_small_shortfall(small, total):
         """Cash to put into small-edge pairs to bring the bucket back to A_SMALL_FRAC of A's pairs at cost:
@@ -432,6 +443,8 @@ class Runner:
             room = self.cached_balance() - config.RESERVE
             return room if self._a_room_cap is None else min(room, self._a_room_cap)
         a_share = split["A"] if "A" in split else 1.0 - sum(v for k, v in split.items() if k != "A")
+        if self._d_paused and "A" in split:
+            a_share += split.get("D", 0.0)        # D's share goes to A while D is paused
         room = self.free_cash() * a_share
         if self._a_room_cap is not None:          # small-edge bucket refill: at most the shortfall
             room = min(room, self._a_room_cap)

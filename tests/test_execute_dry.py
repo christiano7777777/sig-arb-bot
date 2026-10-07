@@ -3,6 +3,7 @@ Run: python tests/test_execute_dry.py"""
 import os
 import sys
 import time
+import types
 from pathlib import Path
 
 os.environ.setdefault("SUSQ_API_KEY", "dummy")
@@ -81,6 +82,7 @@ def make_runner(fake, min_edge=0.005, exposure=None, capital=50_000, reserve=50_
     config.A_CAPITAL_CAP = a_cap
     config.CASH_SPLIT = cash_split
     config.A_SMALL_EDGE, config.A_SMALL_FRAC = 0.01, small_frac
+    config.D_PAUSE_UNTIL_A_SMALL = None
     config.C_LIMIT, config.C_SKEW, config.C_SKEW_MAX, config.C_QUOTE_EDGE, config.C_CLIP = 2_000, 0.10, 0.25, 0.02, 500
     config.C_EXTRA_RACES = 5
     config.POSITIONS_REFRESH_S, config.BULK_REFRESH_S = 30, 30
@@ -1173,6 +1175,58 @@ def test_bucket_at_target_higher_edge_first_as_before():
     r = make_runner(fake, reserve=1_000, small_frac=0.2)
     r.poll()
     assert _buy_races(fake, r)[0] == "Big race"
+
+
+# ---- D paused for A until A's small-edge bucket is >= 10% (user, 2026-10-07) ------------------------------
+SPLIT = {"D": 0.5, "A": 0.25, "B": 0.2, "C": 0.05}
+
+
+def _paused_runner(held_fn):
+    fake = FakeClient({"Big race": EDGE_02, "Small race": EDGE_01, "Held race": NO_EDGE}, balance=1_000 + 1_000)
+    fake.held = held_fn(fake)
+    r = make_runner(fake, cash_split=SPLIT)
+    r.d = types.SimpleNamespace(ledger={})        # D "running" (its executor is not exercised here)
+    config.D_PAUSE_UNTIL_A_SMALL = 0.10
+    return fake, r
+
+
+def test_d_share_goes_to_a_while_bucket_below_10pct():
+    fake, r = _paused_runner(lambda f: _deep_held(f, 10_000))          # bucket 0%
+    r._d_paused = r.d_paused(*r.a_small_bucket())
+    assert r._d_paused
+    assert r.strategy_budget("D") == 0
+    assert abs(r.cash_room() - 750) < 1e-6                             # (0.25 + 0.5) x 1,000 free
+    assert abs(r.strategy_budget("B") - 200) < 1e-6                    # others unchanged
+
+
+def test_d_resumes_once_bucket_reaches_10pct():
+    def held(f):                                   # 9,400 deep + 1,045 small (cost 0.99 x 1,056) -> 10.0%
+        h = _deep_held(f, 10_000)
+        h.update(held_pairs(f, "Small race", 1_056))
+        return h
+    fake, r = _paused_runner(held)
+    small, total = r.a_small_bucket()
+    assert small / total >= 0.10
+    r._d_paused = r.d_paused(small, total)
+    assert not r._d_paused
+    assert abs(r.strategy_budget("D") - 500) < 1e-6 and abs(r.cash_room() - 250) < 1e-6
+
+
+def test_d_pause_off_when_setting_is_none():
+    fake, r = _paused_runner(lambda f: _deep_held(f, 10_000))
+    config.D_PAUSE_UNTIL_A_SMALL = None
+    assert not r.d_paused(*r.a_small_bucket())
+
+
+def test_paused_d_spends_only_on_missing_hedges():
+    import strategy_d
+    config.D_ENTRY_GAP, config.D_CLIP = 0.02, 1_000
+    book = {"D": {"bid": 0.30, "ask": 0.31}, "R": {"bid": 0.60, "ask": 0.61}}
+    hb = {"Texas Senate": {"D": {"bid": 0.6, "ask": 0.61}, "R": {"bid": 0.38, "ask": 0.39}}}
+    led = {("ctrl", "D"): 100}                     # holds control, hedge missing (deficit 100 x 0.15 x 0.39)
+    deficit = 100 * 0.15 * 0.39
+    res = strategy_d.plan(0.40, book, {"Texas Senate": 0.15}, hb, led, deficit)     # paused: budget = deficit
+    assert not [o for o in res["orders"] if o["kind"] == "ctrl" and o["side"] == "buy"]   # no new control
 
 
 if __name__ == "__main__":

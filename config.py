@@ -78,6 +78,10 @@ ROTATE_TRIGGER_CASH = 50     # "out of budget" = less than this above the reserv
 # sell the bucket (a target, not a floor); it refills from freed cash only, never by swapping deep pairs in.
 A_SMALL_EDGE = 0.01
 A_SMALL_FRAC = 0.20          # None = off
+# D paused for A (user, 2026-10-07): while A's small-edge bucket is below this share of A's pairs at cost,
+# D's CASH_SPLIT share goes to A. D still exits and buys missing hedges (those draw on all free cash), but
+# takes no new position. D gets its share back once the bucket is >= this (re-checked every poll).
+D_PAUSE_UNTIL_A_SMALL = 0.10  # None = off
 
 # Exits are immediate (user, 2026-10-04): each poll runs ALL exits first, then only a few entries and
 # swaps, so the next exit check is never more than a few seconds away.
