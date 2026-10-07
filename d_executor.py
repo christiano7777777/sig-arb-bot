@@ -31,6 +31,29 @@ def now_plus(seconds):
     return t.isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
+def load_tags(runner):
+    """orderId -> [strategy, kind, action, race]: published tags, hand-fixed tags, this run's tags."""
+    tags = {}
+    for url in (TAGS_API, TAGS_URL):                   # the API is never stale; raw.githubusercontent caches ~5 min
+        try:
+            req = urllib.request.Request(url, headers={"Accept": "application/vnd.github.raw"})
+            tags = json.load(urllib.request.urlopen(req, timeout=10))
+            break
+        except Exception:                               # noqa: BLE001 - no tags yet: nothing to rebuild
+            continue
+    try:                                                # tags fixed by hand (orders whose tag was lost)
+        tags.update(json.load(open(MANUAL_TAGS, encoding="utf-8")))
+    except (OSError, ValueError):
+        pass
+    try:
+        for line in open(runner.state_dir / "order_tags.jsonl", encoding="utf-8"):
+            t = json.loads(line)
+            tags[str(t["orderId"])] = [t["s"], t["k"], t["a"], t["race"]]
+    except (OSError, AttributeError):
+        pass
+    return tags
+
+
 class DExecutor:
     def __init__(self, runner):
         self.r = runner
@@ -62,24 +85,7 @@ class DExecutor:
     # ---------------- ledger ----------------
     def rebuild(self):
         """D's holdings = sum of D-tagged fills since D_LIVE_SINCE (buys +, sells -)."""
-        tags = {}
-        for url in (TAGS_API, TAGS_URL):               # the API is never stale; raw.githubusercontent caches ~5 min
-            try:
-                req = urllib.request.Request(url, headers={"Accept": "application/vnd.github.raw"})
-                tags = json.load(urllib.request.urlopen(req, timeout=10))
-                break
-            except Exception:                           # noqa: BLE001 - no tags yet: nothing to rebuild
-                continue
-        try:                                            # tags fixed by hand (orders whose tag was lost)
-            tags.update(json.load(open(MANUAL_TAGS, encoding="utf-8")))
-        except (OSError, ValueError):
-            pass
-        try:
-            for line in open(self.r.state_dir / "order_tags.jsonl", encoding="utf-8"):
-                t = json.loads(line)
-                tags[str(t["orderId"])] = [t["s"], t["k"], t["a"], t["race"]]
-        except (OSError, AttributeError):
-            pass
+        tags = load_tags(self.r)
         d_orders = {oid: t for oid, t in tags.items() if t[0] == "D"}
         if not d_orders:
             print("  D: ledger empty (no D orders yet)")

@@ -43,6 +43,7 @@ from arb_math import (ceil_to_tick, fill_price, floor_to_tick, no_asks_from_yes_
                       walk_baskets, walk_exit, widen_limits)
 from b_executor import BExecutor
 from d_executor import DExecutor
+from e_executor import EExecutor
 from price_recorder import PriceRecorder
 from realtime_feed import Feed
 from baskets import list_markets, two_party_baskets
@@ -91,6 +92,9 @@ class Runner:
         self.quote_live = {}       # (exchangeId, side) -> (price, qty, expiry epoch, owner) of our resting quotes
         self.b = BExecutor(self) if config.B_ENABLED else None
         self.d = DExecutor(self) if getattr(config, "D_ENABLED", False) else None
+        # strategy E needs the Kalshi batch cache, which only live runs start (price recorder)
+        self.e = (EExecutor(self) if live and getattr(config, "E_ENABLED", False)
+                  and getattr(config, "KALSHI_BATCH_S", None) else None)
         # realtime feed (2026-10-04): pushed books + our account events; REST stays the fallback
         self.feed = None
         self._bulk, self._bulk_t = {}, 0.0            # last REST bulk quotes and when they were read
@@ -129,8 +133,10 @@ class Runner:
             q = p["quantity"]
             out[p["exchangeId"]] = {"no": max(0.0, -q), "yes": max(0.0, q), "cost": p.get("costBasis") or 0.0,
                                     "raw_no": max(0.0, -q)}     # before D's ledger is taken out (cost per share)
-        if self.d is not None:                    # strategy D's shares belong to D: A, B and C never see them
-            for ex, qty in self.d.ledger.items():
+        for own in (self.d, getattr(self, "e", None)):   # D's and E's shares are theirs: A, B and C never see them
+            if own is None:
+                continue
+            for ex, qty in own.ledger.items():
                 if ex in out:
                     out[ex]["no"] = max(0.0, out[ex]["no"] - qty)
         self._pos, self._pos_t = out, time.time()
@@ -235,6 +241,8 @@ class Runner:
             return "C", "take"
         if tag.startswith("d-"):
             return "D", tag.split("-")[1]           # ctrl / hedge
+        if tag.startswith("e-"):
+            return "E", tag.split("-")[1]           # entry / exit
         if tag.startswith("fix"):
             return "A", "fix"
         return "A", tag.replace("pair-", "")      # buy / sell (exit or swap)
@@ -280,6 +288,8 @@ class Runner:
             self.b.step(q, held)
         if self.d is not None:      # strategy D: Senate-control stat arb (own ledger)
             self.d.step(q)
+        if self.e is not None:      # strategy E: Kalshi-jump breakout (own ledger and cash)
+            self.e.step(q)
         entries, exits = [], []
         for b in self.baskets:
             edge = self.top_edge(q, b)
@@ -379,8 +389,9 @@ class Runner:
         return self._cash
 
     def free_cash(self):
-        """Cash above the hard reserve (resting buy orders are not deducted by the platform)."""
-        return self.cached_balance() - config.HARD_RESERVE
+        """Cash above the hard reserve and E's own cash (resting buy orders are not deducted by the platform)."""
+        e = getattr(self, "e", None)
+        return self.cached_balance() - config.HARD_RESERVE - (e.reserved() if e is not None else 0.0)
 
     def strategy_budget(self, s):
         """Cash strategy s ('B', 'C', 'D') may use for new buys: its CASH_SPLIT share of the free cash, less

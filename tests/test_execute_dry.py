@@ -4,6 +4,7 @@ import os
 import sys
 import time
 import types
+from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -1296,6 +1297,64 @@ def test_c_dump_off_by_default_in_tests():
     fake, r = _b_runner(0, 1_000, balance=1_000, p={"D": 0.86, "R": 0.14})
     r.b.step(r.quotes(), r.positions())
     assert not [o for o in _b_orders(r) if o["idempotencyKey"].endswith("c-take")]
+
+
+# ---- strategy E: Kalshi-jump breakout, own ledger and cash (user, 2026-10-07) ------------------------------
+def _e_runner(balance=20_000):
+    import e_executor
+    import kalshi
+    fake, r = _b_runner(0, 0, balance=balance, p={"D": 0.90, "R": 0.10})   # kalshi.fair, as the cache would give
+    config.E_CAPITAL, config.E_FILL_PER_HOUR, config.E_INTERVAL_S = 10_000, 500, 10
+    config.E_JUMP, config.E_JUMP_WINDOW_S, config.E_BASELINE_S, config.E_MIN_HISTORY_S = 0.03, 60, 7_200, 1_800
+    config.E_MARGIN, config.E_EXIT_SLACK, config.E_LIVE_SINCE = 0.01, 0.005, "2026-01-01T00:00:00+00:00"
+    e_executor.load_tags = lambda runner: {}           # no published tags in tests
+    e = e_executor.EExecutor(r)
+    r.e = e
+    now = time.time()
+    # Kalshi now: p_D 0.90 -> fair NO_R 0.90 (was 0.86 for the last hour; SUSQ NO_R mid 0.8425 = usual gap 0.0175)
+    kalshi._CACHE["SENATEDE-26-D"] = (now, {"yes_bid_dollars": "0.89", "yes_ask_dollars": "0.91"})
+    kalshi._CACHE["SENATEDE-26-R"] = (now, {"yes_bid_dollars": "0.09", "yes_ask_dollars": "0.11"})
+    ex_d, ex_r = fake.ex_of("Delaware Senate", "D"), fake.ex_of("Delaware Senate", "R")
+    e.hist[ex_r] = deque((now - s, 0.86, 0.8425) for s in range(3_600, 0, -10))
+    e.hist[ex_d] = deque((now - s, 0.14, 0.1225) for s in range(3_600, 0, -10))
+    return fake, r, e, ex_d, ex_r
+
+
+def test_e_buys_the_leg_kalshi_jumped_on_and_keeps_it_from_a_b_c():
+    fake, r, e, ex_d, ex_r = _e_runner()
+    e._step(r.quotes())
+    orders = [b for _, b in r.sent if "legs" not in b and b["idempotencyKey"].endswith("e-entry")]
+    assert len(orders) == 1 and orders[0]["exchangeId"] == ex_r and orders[0]["action"] == "buy"
+    assert orders[0]["price"] == 0.87 and orders[0]["quantity"] * 0.87 <= 10_000 + 1e-6   # 0.90 - 0.0175 - 0.01
+    assert e.ledger[ex_r] == orders[0]["quantity"]
+    fake.held = {ex_r: (-e.ledger[ex_r], 0.845 * e.ledger[ex_r])}       # the platform now shows E's shares ...
+    assert r.positions()[ex_r]["no"] == 0                                # ... which A, B and C never see
+    assert r.strategy_of("Delaware Senate:e-entry-buy-R") == ("E", "entry")
+
+
+def test_e_cash_is_reserved_from_the_other_strategies():
+    fake, r, e, ex_d, ex_r = _e_runner(balance=20_000)
+    assert abs(e.cash() - 10_000) < 1e-6                                 # allotment full (live since January)
+    assert abs(r.free_cash() - (20_000 - config.HARD_RESERVE - 10_000)) < 1e-6
+    config.E_LIVE_SINCE = datetime.now(timezone.utc).isoformat()       # just started: allotment ~0
+    import e_executor
+    e2 = e_executor.EExecutor(r)
+    r.e = e2
+    assert e2.cash() < 1 and abs(r.free_cash() - (20_000 - config.HARD_RESERVE)) < 1
+
+
+def test_e_no_entry_when_susq_already_followed():
+    fake, r, e, ex_d, ex_r = _e_runner()
+    for ex in (ex_d, ex_r):                                              # SUSQ moved with Kalshi: usual gap again
+        e.hist[ex] = deque((t, f, f - 0.0175) for t, f, m in e.hist[ex])
+    fake.books[ex_r] = ([(0.12, 9000)], [(0.115, 9000)])                 # NO_R ask 0.88 > limit 0.87
+    e._step(r.quotes())
+    assert not [b for _, b in r.sent if "legs" not in b and b["idempotencyKey"].endswith("e-entry")]
+
+
+def test_e_off_in_dry_runs_by_default():
+    fake, r = _b_runner(0, 0, balance=5_000)
+    assert r.e is None                                                   # tests never start E or touch Kalshi
 
 
 if __name__ == "__main__":

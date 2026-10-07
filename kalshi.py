@@ -36,6 +36,19 @@ def batch(tickers, chunk=100):
     return out
 
 
+def cached(ticker, max_age=FRESH_S):
+    """A batch-read market no older than max_age, else None (never a new request)."""
+    hit = _CACHE.get(ticker)
+    return hit[1] if hit is not None and time.time() - hit[0] <= max_age else None
+
+
+def fair_cached(tickers, max_spread):
+    """fair() from the batch cache only (strategy E: no per-ticker requests); ok False if not cached."""
+    if any(cached(tickers[p]) is None for p in ("D", "R")):
+        return {"ok": False, "why": "not in the batch cache"}
+    return fair(tickers, max_spread)
+
+
 def fair(tickers, max_spread):
     """Return {"p": {"D": p_D, "R": p_R}, "mid": {...}, "spread": {...}, "ok": bool, "why": str}.
     ok is False (do not trade) if a market cannot be read, has no two-sided quote, or its

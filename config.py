@@ -144,6 +144,20 @@ D_KALSHI_EXTRA = {"Montana Senate": "SENATEMT-26-R", "Nebraska Senate": "SENATEN
                   "Ohio Senate": "SENATEOHS-26-R"}   # P(R wins) for the 3 races SUSQ does not list
 D_LIVE_SINCE = "2026-10-04T13:30:00+00:00"   # D's fills counted from here (ledger rebuild)
 
+# --- Strategy E: Kalshi-jump breakout (user, 2026-10-07; strategy_e.py, e_executor.py) ---
+# Needs the Kalshi batch cache (KALSHI_BATCH_S) and runs live only. Own ledger and own cash, independent of A.
+E_ENABLED = True
+E_LIVE_SINCE = "2026-10-07T15:29:00+00:00"   # E's allotment grows from here; E's fills counted from here
+E_CAPITAL = 10_000           # user: 10k, no other risk limit
+E_FILL_PER_HOUR = 500        # user: "slowly allocate": allotment grows 500/h up to E_CAPITAL
+E_INTERVAL_S = 10            # one E round per Kalshi batch refresh
+E_JUMP = 0.03                # Kalshi fair of a leg (NO price) up at least this ...
+E_JUMP_WINDOW_S = 60         # ... within this long
+E_BASELINE_S = 7_200         # usual gap fair - SUSQ mid = median over the last 2 h
+E_MIN_HISTORY_S = 1_800      # no entries in a race until 30 min of history (e.g. after a restart)
+E_MARGIN = 0.01              # buy only at <= (where SUSQ goes if it follows) - this
+E_EXIT_SLACK = 0.005         # caught up: best bid >= that target (now) - this
+
 # --- Strategy C: Kalshi-anchored two-sided market making (user, 2026-10-04; strategy_c.py) ---
 C_LIMIT = 2_000            # directional inventory per race: risk-adding quotes only below this
 C_SKEW = 0.10              # reservation price moves this far from Kalshi fair at C_LIMIT of exposure

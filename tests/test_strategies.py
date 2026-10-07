@@ -1,5 +1,6 @@
 """Offline tests of the pure strategy functions: pair maker (B) and Kalshi market making (C).
 Run: python tests/test_strategies.py"""
+import math
 import sys
 from pathlib import Path
 
@@ -247,6 +248,64 @@ def test_c_dump_sells_when_bid_above_fair():
     books = {"D": {"bids": [(0.21, 300), (0.2, 900)], "asks": [(0.215, 9000)]}, "R": {"bids": [(0.765, 9000)], "asks": [(0.77, 9000)]}}
     o = strategy_c.dump(books, {"D": 0.854, "R": 0.146}, {"D": 500, "R": 0})
     assert o["leg"] == "D" and o["qty"] == 500 and o["price"] == 0.2 and o["edge_vs_fair"] > 0
+
+
+# ---- E: Kalshi-jump breakout (user, 2026-10-07) ------------------------------------------------------------
+import strategy_e  # noqa: E402
+
+
+def pin_e():
+    config.TICK = 0.005
+    config.E_JUMP, config.E_JUMP_WINDOW_S, config.E_BASELINE_S, config.E_MIN_HISTORY_S = 0.03, 60, 7_200, 1_800
+    config.E_MARGIN, config.E_EXIT_SLACK = 0.01, 0.005
+
+
+def flat_hist(now, fair=0.60, mid=0.58, minutes=60):
+    """One sample every 10 s for `minutes`, Kalshi fair and SUSQ mid constant (usual gap 0.02)."""
+    return [(now - s, fair, mid) for s in range(minutes * 60, 0, -10)]
+
+
+def test_e_signal_on_kalshi_jump_when_susq_has_not_followed():
+    pin_e(); now = 100_000.0
+    sig = strategy_e.signal(flat_hist(now), now, fair=0.65, ask=0.59)       # Kalshi +0.05, SUSQ ask still 0.59
+    assert sig and abs(sig["jump"] - 0.05) < 1e-9 and abs(sig["baseline"] - 0.02) < 1e-9
+    assert abs(sig["target"] - 0.63) < 1e-9 and sig["limit"] == 0.62          # 0.65 - 0.02 - 0.01
+
+
+def test_e_no_signal_without_jump_or_when_susq_followed():
+    pin_e(); now = 100_000.0
+    assert strategy_e.signal(flat_hist(now), now, fair=0.62, ask=0.59) is None     # +0.02 < 0.03
+    assert strategy_e.signal(flat_hist(now), now, fair=0.65, ask=0.63) is None     # SUSQ already at 0.63 > 0.62
+
+
+def test_e_no_signal_without_enough_history():
+    pin_e(); now = 100_000.0
+    assert strategy_e.signal(flat_hist(now, minutes=20), now, fair=0.65, ask=0.59) is None   # < 30 min
+
+
+def test_e_jump_must_be_recent():
+    pin_e(); now = 100_000.0
+    h = flat_hist(now)[:-30] + [(now - s, 0.65, 0.58) for s in range(300, 0, -10)]   # Kalshi up 5 min ago
+    assert strategy_e.signal(h, now, fair=0.65, ask=0.59) is None
+
+
+def test_e_buy_size_walks_to_the_limit_within_cash():
+    asks = [(0.59, 100), (0.60, 300), (0.62, 1000), (0.63, 9000)]
+    assert strategy_e.size_buy(asks, 0.62, 10_000) == (1400, 0.62)
+    qty, worst = strategy_e.size_buy(asks, 0.62, 200)                        # cash-limited, at the limit price
+    assert qty == math.floor(200 / 0.62) and qty * 0.62 <= 200 + 1e-9
+    assert strategy_e.size_buy([(0.63, 500)], 0.62, 1_000) == (0, None)         # nothing at or below the limit
+
+
+def test_e_exit_caught_up_reversal_or_hold():
+    pin_e()
+    pos = {"entry_fair": 0.65, "baseline": 0.02}
+    assert strategy_e.exit_rule(pos, fair=0.65, bid=0.625)["why"] == "caught up"     # 0.625 >= 0.63 - 0.005
+    assert strategy_e.exit_rule(pos, fair=0.65, bid=0.60) is None                     # not yet: hold
+    r = strategy_e.exit_rule(pos, fair=0.63, bid=0.58)                               # Kalshi gave back 0.02 >= 0.015
+    assert r["why"] == "reversal" and r["floor"] == 0.58
+    assert strategy_e.exit_rule({"entry_fair": None, "baseline": None}, 0.65, 0.7) is None   # no usual gap yet
+    assert strategy_e.size_sell([(0.63, 200), (0.625, 500), (0.62, 9000)], 0.625, 600) == (600, 0.625)
 
 
 if __name__ == "__main__":

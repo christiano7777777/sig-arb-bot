@@ -325,7 +325,7 @@ function render(d) {
   const sn = d.strategy_now || {}, ssum = Object.values(sn).reduce((s, v) => s + (v || 0), 0);
   document.getElementById("recon").innerHTML = !Object.keys(sn).length ? "" : loading()
     ? "Strategy values: trade history still loading after a bot restart."
-    : `Strategy values (A ${fmt(sn.A)}, B ${fmt(sn.B)}, C ${fmt(sn.C)}, D ${fmt(sn.D)}${sn.U ? `, unattributed ${fmt(sn.U)}` : ""}) sum to
+    : `Strategy values (A ${fmt(sn.A)}, B ${fmt(sn.B)}, C ${fmt(sn.C)}, D ${fmt(sn.D)}${sn.E != null ? `, E ${fmt(sn.E)}` : ""}${sn.U ? `, unattributed ${fmt(sn.U)}` : ""}) sum to
        <b>${(ssum >= 0 ? "+" : "") + fmt(ssum)}</b> vs <b>${(pnl >= 0 ? "+" : "") + fmt(pnl)}</b> total P&amp;L at settlement:
        difference ${(ssum - pnl >= 0 ? "+" : "") + fmt(ssum - pnl)}. The split is an estimate from a replay of the trade history
        (B, C, D at SUSQ mid) and does not reconcile with the account yet.`;

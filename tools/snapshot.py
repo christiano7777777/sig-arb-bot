@@ -303,7 +303,7 @@ def tagged_fills(c, tid, tags):
         key=lambda f: str(f["id"]), keep=lambda f: {k: f.get(k) for k in FILL_KEYS}, ts="filledAt",
         older_than=since[:19])
     ex = exchange_map(c)
-    out = {"A": [], "B": [], "C": [], "D": [], "untagged": []}
+    out = {"A": [], "B": [], "C": [], "D": [], "E": [], "untagged": []}
     for f in sorted(cache.values(), key=lambda f: f["filledAt"]):
         if f["filledAt"] < since[:19]:
             continue
@@ -313,7 +313,7 @@ def tagged_fills(c, tid, tags):
                "price": round(f["price"], 4) if f["price"] is not None else None,
                "side": (tag[2] if tag else "?").upper(), "kind": tag[1] if tag else "?", "ex": f["exchangeId"]}
         # strategy from the order's kind (labels changed on 2026-10-04: maker = B, Kalshi take/quote = C)
-        strat = ("untagged" if not tag else "D" if tag[0] == "D" else "B" if tag[1] == "maker"
+        strat = ("untagged" if not tag else "D" if tag[0] == "D" else "E" if tag[0] == "E" else "B" if tag[1] == "maker"
                  else "C" if tag[1] in ("take", "quote") else "A")
         out[strat].append(row)
     return out
@@ -360,7 +360,7 @@ def strategy_series(trades, attrib, step_min=10):
     for (fill history not loaded that far back yet, or untagged) is U, unattributed, never A."""
     from datetime import timedelta
     fills_at = defaultdict(lambda: defaultdict(float))          # (second, race, party) -> {strategy: qty}
-    for s in ("A", "B", "C", "D", "untagged"):
+    for s in ("A", "B", "C", "D", "E", "untagged"):
         for f in attrib.get(s, []):
             fills_at[(f["ts"][:19], f["race"], f["party"])]["U" if s == "untagged" else s] += f["qty"]
     legs = []
@@ -397,7 +397,7 @@ def strategy_series(trades, attrib, step_min=10):
             q = by_sec[(x["race"], x["ts"])]
             pair = len(q) == 2 and abs(min(q.values()) - max(q.values())) < 1e-9   # same size both legs
             x["s"] = "A" if pair or x["race"] not in config.B_RACES else "C"
-    state = {s: {"cash": 0.0, "legs": defaultdict(lambda: [0.0, 0.0])} for s in ("A", "B", "C", "D", "U")}
+    state = {s: {"cash": 0.0, "legs": defaultdict(lambda: [0.0, 0.0])} for s in ("A", "B", "C", "D", "E", "U")}
 
     def value(st):
         v = st["cash"]
@@ -447,13 +447,13 @@ def strategy_now(c, tid, series, state, legs_of, quotes):
     current market value: cash flow + the NO shares each holds at the SUSQ mid (user, 2026-10-04)."""
     if not series:
         return {}
-    need = sorted({legs_of.get(race, {}).get(party[0]) for s in ("B", "C", "D")
+    need = sorted({legs_of.get(race, {}).get(party[0]) for s in ("B", "C", "D", "E")
                    for (race, party), (q, _) in state[s]["legs"].items() if q} - {None} - set(quotes))
     for i in range(0, len(need), 100):
         r = c.get("/exchanges/prices", ids=",".join(need[i:i + 100]), tournamentId=tid)
         quotes.update({x["exchangeId"]: x for x in r["data"]})
     out = {"A": series[-1]["A"], "U": series[-1]["U"]}
-    for s in ("B", "C", "D"):
+    for s in ("B", "C", "D", "E"):
         v = state[s]["cash"]
         for (race, party), (q, cost) in state[s]["legs"].items():
             x = quotes.get(legs_of.get(race, {}).get(party[0]), {})
