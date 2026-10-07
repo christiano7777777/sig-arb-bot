@@ -140,8 +140,8 @@ class BExecutor:
             if not k["ok"]:
                 print(f"  C {b.name}: Kalshi not trusted ({k.get('why', '')})")
                 continue
-            if jump or b.name in dumped:
-                continue                            # fair value just moved / dumped this round: quote next round
+            if jump or b.name in dumped or not getattr(config, "C_QUOTES", True):
+                continue                            # fair value just moved / dumped this round / C stopped: no quote
             books = {x: self.top_book(q, ex[x]) for x in "DR"}
             res = strategy_c.quotes(books, k["p"], h, spend)
             for o in res["orders"]:
@@ -189,8 +189,9 @@ class BExecutor:
         """Pair maker on the largest held races (pair_maker.py): the pair quotes wanted this round,
         {(exchangeId, side): (basket, order)}. Posting is left to reconcile()."""
         # NO ask sum of every race (without our own quotes): the pair a swap could rotate the cash into
+        top = getattr(self.r, "a_top", None)        # A buys only there (A_TOP_N), so only those can take the cash
         pair_ask = {b.name: sum(1 - q[e]["bestBid"] for e in b.ex) for b in self.r.baskets
-                    if all(q.get(e, {}).get("bestBid") is not None for e in b.ex)}
+                    if all(q.get(e, {}).get("bestBid") is not None for e in b.ex) and (top is None or b.name in top)}
         big = sorted(((b, ex, h, k) for (b, ex, h), k in zip(active, fairs) if min(h.values()) >= config.MAKER_MIN_PAIRS),
                      key=lambda t: -min(t[2].values()))[:config.MAKER_RACES]
         want = {}

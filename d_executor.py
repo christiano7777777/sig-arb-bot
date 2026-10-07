@@ -111,8 +111,8 @@ class DExecutor:
 
     # ---------------- one round ----------------
     def step(self, q):
-        if self.ctrl is None or time.time() < self.next_t:
-            return
+        if self.ctrl is None or time.time() < self.next_t or getattr(config, "D_FROZEN", False):
+            return                                         # D_FROZEN: no orders, the ledger (and position) stays
         self.next_t = time.time() + config.D_INTERVAL_S
         hd = self.r.health["D"] if hasattr(self.r, "health") else {"rounds": 0, "errors": 0}
         hd["rounds"] += 1

@@ -33,7 +33,8 @@ TRADE_AT_ZERO_EDGE = False  # scan.py only
 # The arb strategy may use only the cash above RESERVE (initial 100,000 -> 50,000 for this strategy).
 # The budget is read from the live balance before every entry, so exits automatically free it again.
 RESERVE = 50_000             # (legacy, used only when A_CAPITAL_CAP is None) core budget = cash above this
-CASH_SPLIT = {"D": 0.5, "A": 0.3, "B": 0.2, "C": 0.0}     # user, 2026-10-07: C's 5% to A (was A 0.25 / C 0.05)
+CASH_SPLIT = {"D": 0.0, "A": 0.8, "B": 0.2, "C": 0.0}     # user, 2026-10-08: D frozen, its 50% to A (was D 0.5 / A 0.3)
+                             # (2026-10-07: D 0.5 / A 0.3 / B 0.2 / C 0, C's 5% to A)
                              # (2026-10-05: D 0.5 / A 0.25 / B 0.2 / C 0.05) share of the free cash (above
                              # HARD_RESERVE) each strategy may use for new buys, read fresh every time (so cash the
                              # others leave idle is used up step by step). D's missing hedges are funded first.
@@ -78,13 +79,16 @@ ROTATE_TRIGGER_CASH = 50     # "out of budget" = less than this above the reserv
 # A's new cash buys only small-edge entries, at most the shortfall; bigger edges are swap-only. Swaps may
 # sell the bucket (a target, not a floor); it refills from freed cash only, never by swapping deep pairs in.
 A_SMALL_EDGE = 0.01
-A_SMALL_FRAC = 0.20          # cap: small-edge pairs at most this share of A's pairs at cost. None = off
+A_SMALL_FRAC = None          # user, 2026-10-08: off with the top-3 focus (small edges were in other races); was 0.20
                              # (13:30 off: unpaced, swaps sold the new pairs within seconds, ~0.015/pair lost)
 # Paced small edges (user, 2026-10-07 14:30: "put some money on small edge, but slowly"): small-edge entries get
 # first claim on A's cash, but at most A_SMALL_PER_HOUR SUSQies (at limit cost) per rolling hour; all other
 # entries are unchanged (highest edge first). A_SMALL_PROTECT: swaps never sell races whose average pair cost
 # is >= 1 - A_SMALL_EDGE, so these are not bought and sold again; plain exits at >= 1 still apply.
 A_SMALL_PER_HOUR = 300
+# Top-N focus (user, 2026-10-08): A buys and swaps only in its N largest races (pairs at cost, recomputed every
+# poll); races outside them are sold only by plain exits (bids sum >= 1, "0 edge") and never fund swaps.
+A_TOP_N = 3                  # None = all races
 A_SMALL_PROTECT = True
 # D paused for A (user, 2026-10-07): while A's small-edge bucket is below this share of A's pairs at cost,
 # D's CASH_SPLIT share goes to A. D still exits and buys missing hedges (those draw on all free cash), but
@@ -122,6 +126,7 @@ B_CLOSE_BID_RATIO = 0.5    # closing: buy-back bid = ratio * clip * (1 - leftove
 # Trade SUSQ "U.S. Senate" toward Kalshi's control price, delta-hedged with the state Senate races:
 # delta_i = dP(R control)/dp_i under a national-swing model calibrated to Kalshi's control price.
 D_ENABLED = True
+D_FROZEN = True              # user, 2026-10-08: D stopped, no orders; its hedged position is held to settlement (ledger kept)
 D_CAPITAL = 10_000           # SUSQies for D (control leg + hedges, at cost); starts with whatever cash is free
 D_ENTRY_GAP = 0.03           # enter when |Kalshi - SUSQ| on Republican control >= this
 D_EXIT_GAP = 0.01            # exit everything once it is <= this
@@ -165,14 +170,16 @@ C_SKEW_MAX = 0.25          # ... capped here (big legacy positions: strongest pu
 C_QUOTE_EDGE = 0.02        # quotes at least this far from the reservation price
 C_CLIP = 500               # shares per quote
 C_CUT_ONLY = True          # user, 2026-10-05: C only unwinds what it holds (no new inventory, no bids in other races)
-C_DUMP_GAP = 0.03          # user, 2026-10-07: sell C's excess leg into the bids while they are within this of Kalshi
+C_QUOTES = False           # user, 2026-10-08: C stopped, no quotes anywhere (stale ones are cancelled)
+C_DUMP_GAP = 0.15          # user, 2026-10-08 "sell everything now" (was 0.03): any bid within 0.15 of Kalshi fair, so a
+                           # thin book is not sold into far below fair; user, 2026-10-07: sell C's excess leg into the bids while they are within this of Kalshi
                            # fair (races without pairs only; the rest keeps unwinding at the best ask). None = off
 C_DUMP_PER_ROUND = 2       # races dumped per B round (each = cancel + order, inside the 30 writes/min budget)
 C_EXTRA_RACES = 5          # races we do not hold: bids on the cheap leg in the 5 with the biggest gap
 B_SKEW = 0.02             # holding: reservation price moves this far from fair at full race-cap exposure (user: slight)
 B_TOTAL_CAP_FRAC = 0.30    # max shares at risk over all races, as a fraction of portfolio value (user: 30%)
 MAKER_ENABLED = True       # pair maker (pair_maker.py): resting two-sided pair quotes on the largest held races
-MAKER_RACES = 10           # how many held races (largest by pairs) get pair quotes
+MAKER_RACES = 3            # user, 2026-10-08: top 3 only (was 10); how many held races (largest by pairs) get pair quotes
 MAKER_MIN_PAIRS = 500      # ... and only races holding at least this many pairs
 MAKER_CLIP = 500           # pairs per side per race
 MAKER_LIFE_S = 300         # quotes rest this long; re-posted only on expiry or when the best price moves

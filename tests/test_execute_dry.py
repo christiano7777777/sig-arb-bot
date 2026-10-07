@@ -85,6 +85,7 @@ def make_runner(fake, min_edge=0.005, exposure=None, capital=50_000, reserve=50_
     config.CASH_SPLIT = cash_split
     config.A_SMALL_EDGE, config.A_SMALL_FRAC = 0.01, small_frac
     config.A_SMALL_PER_HOUR, config.A_SMALL_PROTECT = 300, True
+    config.A_TOP_N, config.C_QUOTES, config.D_FROZEN = None, True, False
     config.D_PAUSE_UNTIL_A_SMALL = None
     config.C_LIMIT, config.C_SKEW, config.C_SKEW_MAX, config.C_QUOTE_EDGE, config.C_CLIP = 2_000, 0.10, 0.25, 0.02, 500
     config.C_EXTRA_RACES = 5
@@ -1355,6 +1356,63 @@ def test_e_no_entry_when_susq_already_followed():
 def test_e_off_in_dry_runs_by_default():
     fake, r = _b_runner(0, 0, balance=5_000)
     assert r.e is None                                                   # tests never start E or touch Kalshi
+
+
+# ---- top-3 focus, C stopped, D frozen (user, 2026-10-08) --------------------------------------------------
+def _top3_runner():
+    # A holds 4 races at cost 0.94: Big1 5,000 pairs, Big2 4,000, Big3 3,000, Small 100
+    races = {"Big1 race": NO_EDGE, "Big2 race": NO_EDGE, "Big3 race": EDGE_02, "Small race": EDGE_02, "New race": EDGE_02}
+    fake = FakeClient(races, balance=1_000 + 5_000)
+    fake.held = {}
+    for name, n in (("Big1 race", 5_000), ("Big2 race", 4_000), ("Big3 race", 3_000), ("Small race", 100)):
+        fake.held.update({fake.ex_of(name, "D"): (-n, 0.47 * n), fake.ex_of(name, "R"): (-n, 0.47 * n)})
+    r = make_runner(fake, reserve=1_000)
+    config.A_TOP_N = 3
+    return fake, r
+
+
+def test_top3_is_the_three_largest_by_cost():
+    fake, r = _top3_runner()
+    assert r.a_top_races(r.positions()) == {"Big1 race", "Big2 race", "Big3 race"}
+    config.A_TOP_N = None
+    assert r.a_top_races(r.positions()) is None
+
+
+def test_top3_buys_only_in_the_top3():
+    fake, r = _top3_runner()
+    r.poll()
+    bought = {_race_of_any(fake, b["legs"][0]["exchangeId"]) for _, b in r.sent if b["legs"][0]["action"] == "buy"}
+    assert bought == {"Big3 race"}                 # Small race and New race show the same 0.02 edge: not bought
+
+
+def test_top3_swaps_never_sell_races_outside_the_top3():
+    fake, r = _top3_runner()
+    r.a_top = r.a_top_races(r.positions())
+    b = next(x for x in r.baskets if x.name == "Big3 race")
+    names = {a.name for _, a in r.sellers(r.quotes(), r.positions(), b, 0.0)}
+    assert "Small race" not in names
+
+
+def test_c_stopped_sends_no_quotes():
+    fake, r = _b_runner(0, 1_000, balance=5_000, p={"D": 0.70, "R": 0.30})   # C holds 1,000 NO_R: would quote
+    config.C_QUOTES = False
+    r.b.step(r.quotes(), r.positions())
+    assert not [o for o in _b_orders(r) if "c-quote" in o["idempotencyKey"]]
+
+
+def test_d_frozen_sends_nothing():
+    fake, r = _d_runner(ledger={("Texas Senate", "R"): 150})
+    config.D_FROZEN = True
+    r.d.next_t = 0
+    r.d.step(r.quotes())
+    assert not [b for _, b in r.sent if "d-" in b.get("idempotencyKey", "")]
+
+
+def _race_of_any(fake, ex):
+    for m in fake.markets:
+        if m["exchanges"][0]["id"] == ex:
+            return m["title"].split(" win the ")[1].rstrip("?")
+    return "?"
 
 
 if __name__ == "__main__":

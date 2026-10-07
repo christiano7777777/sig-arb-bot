@@ -106,6 +106,7 @@ class Runner:
         self._a_room_cap = None                       # cap on A's cash room while the small-edge bucket refills
         self._d_paused = False                        # D's cash share goes to A (D_PAUSE_UNTIL_A_SMALL)
         self._small_spent = []                        # (time, cost) of small-edge buys (A_SMALL_PER_HOUR)
+        self.a_top = None                             # A's largest races this poll (A_TOP_N)
         if getattr(config, "REALTIME_ENABLED", False):
             self.feed = Feed(SusqClient(), self.tour["id"])    # own client: the token mint is its only call
             self.feed.start()
@@ -284,6 +285,7 @@ class Runner:
         self._a_cost = None                       # A's holdings at cost, computed once per poll when needed
         small_cost, a_cost = self.a_small_bucket(held)
         self._d_paused = self.d_paused(small_cost, a_cost)
+        self.a_top = self.a_top_races(held)
         if self.b is not None:      # strategies B and C first: their buys are worth more than an arb entry
             self.b.step(q, held)
         if self.d is not None:      # strategy D: Senate-control stat arb (own ledger)
@@ -300,6 +302,8 @@ class Runner:
             if (config.EXIT_ENABLED and pairs >= 1 and None not in asks
                     and sum(1 - x for x in asks) >= config.EXIT_MIN_SUM - 1e-9):
                 exits.append((sum(1 - x for x in asks), b))
+        if self.a_top is not None:   # top-N focus: buys and swaps only into A's largest races (A_TOP_N)
+            entries = [t for t in entries if t[1].name in self.a_top]
         entries.sort(key=lambda t: -t[0])                            # higher edge first
         exits = [b for _, b in sorted(exits, key=lambda t: -t[0])]  # best sell price first
         allow = self.a_small_allowance(small_cost, a_cost)
@@ -442,6 +446,21 @@ class Runner:
         frac = getattr(config, "D_PAUSE_UNTIL_A_SMALL", None)
         return bool(frac) and self.d is not None and total > 0 and small < frac * total - 1e-9
 
+    def a_top_races(self, held):
+        """Names of A's A_TOP_N largest races by pairs at cost (None = no focus). Same pairs as a_holdings_cost."""
+        n = getattr(config, "A_TOP_N", None)
+        if not n:
+            return None
+        cost = []
+        for b in self.baskets:
+            legs = [held.get(e) for e in b.ex]
+            if None in legs:
+                continue
+            pairs = min(l["no"] for l in legs)
+            if pairs > 0:
+                cost.append((pairs * sum(l["cost"] / max(l.get("raw_no", l["no"]), 1e-9) for l in legs), b.name))
+        return {name for _, name in sorted(cost, reverse=True)[:n]}
+
     def a_small_allowance(self, small, total):
         """Cash small-edge entries may still use now: the rest of this rolling hour's A_SMALL_PER_HOUR, at most
         what keeps the small-edge pairs within A_SMALL_FRAC of A's pairs at cost. 0 when off."""
@@ -504,6 +523,8 @@ class Runner:
                 continue
             pairs = min(held.get(e, {}).get("no", 0.0) for e in a.ex)
             asks = [q.get(e, {}).get("bestAsk") for e in a.ex]
+            if getattr(self, "a_top", None) is not None and a.name not in self.a_top:
+                continue                            # outside the top N: sold only by plain exits (A_TOP_N)
             if pairs >= 1 and getattr(config, "A_SMALL_PROTECT", False) and getattr(config, "A_SMALL_FRAC", None):
                 legs = [held[e] for e in a.ex]
                 if sum(l["cost"] / max(l.get("raw_no", l["no"]), 1e-9) for l in legs) >= 1.0 - config.A_SMALL_EDGE - 1e-9:
