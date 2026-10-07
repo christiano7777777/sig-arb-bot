@@ -401,13 +401,18 @@ let snap = null;
 // replay (strategy_series), which is recomputed from the full history every snapshot. (Until 2026-10-07 this
 // used the values recorded in the history, which each bot run restated: a run reloaded only part of the
 // history, and trades it could not attribute were counted as A.) null until the replay covers h hours.
+// the snapshot's fill/trade history is reloaded at each bot run start (~20 min): until then the replay is partial
+function loading() {
+  const hc = snap && snap.history_complete;
+  return !!hc && !Object.values(hc).every(Boolean);
+}
 function aSeries() {
   const ser = (snap && snap.strategy_series) || [];
   return ser.filter(p => p.A != null).map(p => ({ t: p.t, v: p.A }));
 }
 function valueGained(h) {
   const pts = aSeries();
-  if (pts.length < 2) return null;
+  if (loading() || pts.length < 2) return null;
   const end = pts[pts.length - 1], t0 = new Date(end.t).getTime() - h * 3600e3;
   if (new Date(pts[0].t).getTime() > t0) return null;
   let start = pts[0];
@@ -466,6 +471,12 @@ function drawChart() {
   document.querySelectorAll("#winbar button").forEach(btn =>
     btn.setAttribute("aria-pressed", String(+btn.dataset.w === winHours)));
   const pts = windowPoints();
+  if (k === "A" && loading()) {
+    const from = pts.length ? new Date(pts[0].t).toLocaleString() : "now";
+    document.getElementById("l" + k).innerHTML = `<span><i style="background:${SCOL[k]}"></i>${SNAME[k]}: <b>–</b></span>`;
+    svg.innerHTML = `<text x="${W / 2}" y="${H / 2}" text-anchor="middle" style="fill:var(--muted);font-size:12px">Loading trade history after a bot restart (back to ${esc(from)} so far)…</text>`;
+    return;
+  }
   if (pts.length < 2) {
     svg.innerHTML = `<text x="${W / 2}" y="${H / 2}" text-anchor="middle">Not enough data in this window yet (one point every 2 min).</text>`;
     document.getElementById("legend").innerHTML = "";
@@ -571,9 +582,6 @@ function drawStrat(k) {
   document.getElementById("l" + k).innerHTML = `<span><i style="background:${SCOL[k]}"></i>${SNAME[k]}: <b>${fmt(now)}</b></span>`;
   document.getElementById("n" + k).textContent = k === "A"
     ? "Its own trades only: cash flow + what it holds, a pair paying 1 and single legs at cost (like the main curve)." +
-      (snap.history_complete && !Object.values(snap.history_complete).every(Boolean)
-        ? " Trade history still loading (first hour of a bot run): the split between strategies is partial."
-        : "") +
       ((snap.strategy_now || {}).U ? ` Unattributed trades (no matching tagged fill): ${fmt(snap.strategy_now.U)}.` : "")
     : `Its own trades only: cash flow + what it holds at the current SUSQ market value (mid), recorded from ${liveFrom ? new Date(liveFrom).toLocaleString() : "now on"}; before that at cost.`;
   if (pts.length < 2) {
