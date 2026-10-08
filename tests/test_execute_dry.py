@@ -89,6 +89,7 @@ def make_runner(fake, min_edge=0.005, exposure=None, capital=50_000, reserve=50_
     config.A_TOP_N, config.C_QUOTES, config.D_FROZEN = None, True, False
     config.A_SMALL_POT, config.C_DUMP_PAIR_GAP, config.MAKER_EXIT_CLIP, config.INTAKE_SHORTLIST = None, None, 2_000, 5
     config.MAKER_FOCUS_BIDS, config.E_ALLOT_BASE, config.A_NONFOCUS_MAX_EDGE = False, None, None
+    config.EXIT_QUEUE, config.HOLD_RACES, config.D_CLOSE = None, [], False
     config.D_PAUSE_UNTIL_A_SMALL = None
     config.C_LIMIT, config.C_SKEW, config.C_SKEW_MAX, config.C_QUOTE_EDGE, config.C_CLIP = 2_000, 0.10, 0.25, 0.02, 500
     config.C_EXTRA_RACES = 5
@@ -1606,6 +1607,72 @@ def test_non_big3_cash_buys_highest_edge_up_to_the_cap_only():
     r.poll()
     got = _bought(fake, r)
     assert got and got[0] == "Mid race" and "Big edge race" not in got and "F3 race" not in got
+
+
+# ---- exit queue (user, 2026-10-08 05:30): Alaska, then Delaware; MN-05 held; everything else rotates --------
+def _queue_runner(balance=50_000.5):
+    races = {"Alaska Senate": SELLER_0995, "Delaware Senate": SELLER_0995, "MN-05 House race": SELLER_0995,
+             "Rot race": SELLER_0990, "Edge race": EDGE_02, "Tiny race": EDGE_01}
+    fake = FakeClient(races, balance=balance)
+    fake.held = {}
+    for name, n in (("Alaska Senate", 2_500), ("Delaware Senate", 36_000), ("MN-05 House race", 57_000), ("Rot race", 800)):
+        fake.held.update({fake.ex_of(name, "D"): (-n, 0.47 * n), fake.ex_of(name, "R"): (-n, 0.47 * n)})
+    r = make_runner(fake)
+    config.EXIT_QUEUE, config.HOLD_RACES = ["Alaska Senate", "Delaware Senate"], ["MN-05 House race"]
+    return fake, r
+
+
+def test_exit_queue_alaska_first_then_delaware():
+    fake, r = _queue_runner()
+    r.exit_queue_update(r.positions())
+    assert r.exiting == "Alaska Senate"
+    for leg in "DR":
+        del fake.held[fake.ex_of("Alaska Senate", leg)]
+    r.exit_queue_update(r.positions())
+    assert r.exiting == "Delaware Senate"
+
+
+def test_exit_queue_buys_only_rotating_races_highest_edge_first():
+    fake, r = _queue_runner(balance=50_000 + 600)   # legacy budget: cash above RESERVE 50,000
+    r.poll()
+    got = _bought(fake, r)
+    assert got and got[0] == "Edge race" and not {"Alaska Senate", "Delaware Senate", "MN-05 House race"} & set(got)
+
+
+def test_exit_queue_swaps_sell_the_exit_race_first_never_held_or_queued_later():
+    fake, r = _queue_runner()
+    r.exit_queue_update(r.positions())
+    edge = next(b for b in r.baskets if b.name == "Edge race")
+    names = {a.name for _, a in r.sellers(r.quotes(), r.positions(), edge, 0.0)}
+    assert names == {"Alaska Senate", "Rot race"}           # not Delaware (queued later), not MN-05 (held)
+    r.poll()                                                # out of cash: a swap into Edge race sells Alaska first
+    sells = [_race_of_any(fake, b["legs"][0]["exchangeId"]) for _, b in r.sent if b["legs"][0]["action"] == "sell"]
+    assert sells and sells[0] == "Alaska Senate"
+
+
+def test_exit_queue_b_asks_all_pairs_of_the_exit_race_only():
+    fake = FakeClient({"Alaska Senate": DE, "Other race": CHEAP_096, "Delaware Senate": DE}, balance=5_000)
+    config.B_RACES = {"Alaska Senate": {"event": "A", "D": "A-D", "R": "A-R"},
+                      "Delaware Senate": {"event": "SENATEDE-26", "D": "SENATEDE-26-D", "R": "SENATEDE-26-R"}}
+    r = make_runner(fake, b_enabled=True)
+    config.EXIT_QUEUE, config.HOLD_RACES = ["Alaska Senate", "Delaware Senate"], []
+    r.exiting = "Alaska Senate"
+    act = []
+    for name in ("Alaska Senate", "Delaware Senate"):
+        b = next(x for x in r.baskets if x.name == name)
+        act.append((b, {"D": fake.ex_of(name, "D"), "R": fake.ex_of(name, "R")}, {"D": 2_509, "R": 2_509}))
+    want = r.b.queue_exit_quotes(r.quotes(), act)
+    assert sorted((k[1], o["qty"]) for k, (_, o) in want.items()) == [("sell", 2_509), ("sell", 2_509)]
+    assert {k[0] for k in want} == {fake.ex_of("Alaska Senate", "D"), fake.ex_of("Alaska Senate", "R")}
+
+
+def test_d_close_sells_its_whole_ledger_at_the_best_bid():
+    fake, r = _d_runner(ledger={("Texas Senate", "R"): 150})
+    config.D_CLOSE = True
+    r.d.next_t = 0
+    r.d.step(r.quotes())
+    sells = [b for _, b in r.sent if "d-close" in b.get("idempotencyKey", "")]
+    assert len(sells) == 1 and sells[0]["action"] == "sell" and sells[0]["quantity"] == 150
 
 
 if __name__ == "__main__":

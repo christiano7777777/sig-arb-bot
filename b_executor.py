@@ -123,6 +123,8 @@ class BExecutor:
             for (b, ex, h), k in zip(active, fairs):
                 if len(dumped) >= config.C_DUMP_PER_ROUND:
                     break
+                if b.name == getattr(self.r, "exiting", None):
+                    continue                        # the exit race's legs are left to its exit (user, 2026-10-08)
                 pair_race = min(h["D"], h["R"]) >= 1      # one-sided legs there: C_DUMP_PAIR_GAP (user, 2026-10-08)
                 gap = getattr(config, "C_DUMP_PAIR_GAP", None) if pair_race else config.C_DUMP_GAP
                 if not k["ok"] or gap is None:
@@ -193,6 +195,8 @@ class BExecutor:
         # NO ask sum of every race (without our own quotes): the pair a swap could rotate the cash into
         if getattr(config, "A_TOP_N", None) and getattr(self.r, "a_top", None) is not None:
             return self.exit_quotes(q, active)      # focus rotation: B only sells the exit race
+        if getattr(config, "EXIT_QUEUE", None):
+            return self.queue_exit_quotes(q, active)   # exit queue: B only sells the current exit race
         top = getattr(self.r, "a_top", None)        # A buys only there (A_TOP_N), so only those can take the cash
         pair_ask = {b.name: sum(1 - q[e]["bestBid"] for e in b.ex) for b in self.r.baskets
                     if all(q.get(e, {}).get("bestBid") is not None for e in b.ex) and (top is None or b.name in top)}
@@ -216,6 +220,24 @@ class BExecutor:
             for o in pair_maker.pair_quotes(books, h, cheapest, spend, fav, rroom):
                 if o["side"] == "buy":
                     spend -= o["qty"] * o["price"]
+                want[(ex[o["leg"]], o["side"])] = (b, {**o, "kind": "maker", "edge_vs_fair": 0.0})
+        return want
+
+    def queue_exit_quotes(self, q, active):
+        """EXIT_QUEUE (user, 2026-10-08 05:30): asks on both legs of the current exit race for ALL its pairs, at the best
+        asks, while its ask sum >= the cheapest pair A could buy elsewhere + ROTATE_MIN_GAIN. No bids anywhere."""
+        exiting, want = getattr(self.r, "exiting", None), {}
+        if exiting is None:
+            return want
+        skip = set(config.EXIT_QUEUE) | set(getattr(config, "HOLD_RACES", []))
+        cheapest = min((sum(1 - q[e]["bestBid"] for e in b.ex) for b in self.r.baskets
+                        if b.name not in skip and all(q.get(e, {}).get("bestBid") is not None for e in b.ex)), default=None)
+        for b, ex, h in active:
+            if b.name != exiting:
+                continue
+            books = {x: self.top_book(q, ex[x]) for x in "DR"}
+            allp = max(1, int(min(h["D"], h["R"])))
+            for o in pair_maker.pair_quotes(books, h, cheapest, 0.0, clip=allp, bids_on=False):
                 want[(ex[o["leg"]], o["side"])] = (b, {**o, "kind": "maker", "edge_vs_fair": 0.0})
         return want
 

@@ -402,11 +402,16 @@ function render(d) {
       <td>${esc(t.race)}</td><td>${fmt(t.pairs, 0)}</td><td>${fmt(t.price, 4)}</td></tr>`).join("");
 
   // focus rotation (2026-10-08): focus races (A buys), the one B is selling, the small-edge pot, the rest held
-  const f = d.focus;
-  const role = r => !f ? "" : r.race === f.exiting ? "B exiting" : (f.focus || []).includes(r.race) ? "big 3" : "non-big-3 (rotates)";
-  const roleRank = { "B exiting": 0, "big 3": 1, "non-big-3 (rotates)": 2, "": 3 };
+  const f = d.focus, eq = d.exit_queue, holdR = d.hold_races || [];
+  const held = new Set(d.rows.filter(r => r.pairs > 0).map(r => r.race));
+  const curExit = eq ? eq.find(r => held.has(r)) : null;
+  const role = r => eq ? (r.race === curExit ? "exiting now" : eq.includes(r.race) ? "next exit (after " + curExit + ")"
+                          : holdR.includes(r.race) ? "hold" : "rotating")
+    : !f ? "" : r.race === f.exiting ? "B exiting" : (f.focus || []).includes(r.race) ? "big 3" : "non-big-3 (rotates)";
+  const roleRank = r => { const x = role(r); return x === "exiting now" || x === "B exiting" ? 0 : x.startsWith("next") ? 1
+    : x === "hold" || x === "big 3" ? 2 : 3; };
   document.getElementById("rows").innerHTML = d.rows.filter(r => r.pairs > 0)
-    .sort((a, b) => roleRank[role(a)] - roleRank[role(b)] || b.pairs - a.pairs).map(r => {
+    .sort((a, b) => roleRank(a) - roleRank(b) || b.pairs - a.pairs).map(r => {
     const e = r.current_edge;
     const cls = e == null ? "e2" : e <= 0.005 ? "e0" : e <= 0.02 ? "e1" : "e2";
     return `<tr><td>${esc(r.race)}</td><td class="n">${role(r)}</td><td>${fmt(r.pairs, 0)}</td><td>${fmt(r.avg_cost, 4)}</td>
@@ -476,8 +481,26 @@ function renderB(b) {
 
 function renderRotation(d) {
   const f = d.focus, box = document.getElementById("rotation");
+  if (d.exit_queue) {                   // exit queue (2026-10-08 05:30) replaces the focus rotation
+    box.hidden = false;
+    const rows = d.rows.filter(r => r.pairs > 0), held = new Set(rows.map(r => r.race));
+    const cur = d.exit_queue.find(r => held.has(r)), ex = rows.find(r => r.race === cur);
+    document.querySelector("#rotation h2").innerHTML = 'Exit queue <span class="n">(since 2026-10-08 05:30 UTC)</span>';
+    document.getElementById("aintro").innerHTML = `<span class="badge ba">A</span> Exits the heavy markets one at a time
+      (${d.exit_queue.map(esc).join(" → ")}): B offers all pairs of the current one at the best asks, and A sells it into the
+      bids whenever the cash can buy any cheaper pair. ${(d.hold_races || []).map(esc).join(", ") || "–"}: held (no buys, no
+      sells). Every other market rotates: all free cash, any edge, highest first. Plain exits (bids ≥ 1) everywhere.`;
+    document.getElementById("rotcards").innerHTML =
+      card("Exiting now", cur ? esc(cur) : "–", ex ? `${fmt(ex.pairs, 0)} pairs left · bid sum ${fmt(ex.sell_sum, 3)} · ask sum ${fmt(ex.buy_sum, 3)}` : "queue done") +
+      card("Queue", d.exit_queue.length, d.exit_queue.map(r => (r === cur ? "▶ " : "") + esc(r)).join(" → ")) +
+      card("Held", (d.hold_races || []).length, (d.hold_races || []).map(esc).join(", ") || "–");
+    document.getElementById("rotlog").innerHTML = "";
+    document.getElementById("rotlog").closest(".tablewrap").hidden = true;    // no event log for the exit queue
+    return;
+  }
   box.hidden = !f;
   if (!f) return;
+  document.getElementById("rotlog").closest(".tablewrap").hidden = false;
   const rows = d.rows.filter(r => r.pairs > 0);
   const ex = rows.find(r => r.race === f.exiting);
   const pot = rows.filter(r => !(f.focus || []).includes(r.race)).reduce((s, r) => s + r.pairs * r.avg_cost, 0);

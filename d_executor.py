@@ -111,7 +111,13 @@ class DExecutor:
 
     # ---------------- one round ----------------
     def step(self, q):
-        if self.ctrl is None or time.time() < self.next_t or getattr(config, "D_FROZEN", False):
+        if self.ctrl is None or time.time() < self.next_t:
+            return
+        if getattr(config, "D_CLOSE", False):              # user, 2026-10-08 05:30: D flat
+            self.next_t = time.time() + config.D_INTERVAL_S
+            self.close_all(q)
+            return
+        if getattr(config, "D_FROZEN", False):
             return                                         # D_FROZEN: no orders, the ledger (and position) stays
         self.next_t = time.time() + config.D_INTERVAL_S
         hd = self.r.health["D"] if hasattr(self.r, "health") else {"rounds": 0, "errors": 0}
@@ -168,6 +174,20 @@ class DExecutor:
             b = self.ctrl if o["race"] == "ctrl" else self.hedge[o["race"]]
             ex = next(l["exchange_id"] for l in b.legs if l["party"] == o["leg"])
             self.send(b, ex, o)
+
+    def close_all(self, q):
+        """D_CLOSE: sell every share in D's ledger at the best NO bid (one marketable order per exchange per round;
+        what does not fill is tried again next round)."""
+        for ex, qty in list(self.ledger.items()):
+            if qty < 1 or ex not in self.ex_key:
+                continue
+            race, leg = self.ex_key[ex]
+            b = self.ctrl if race == "ctrl" else self.hedge.get(race)
+            ask_y = q.get(ex, {}).get("bestAsk")                 # YES ask -> NO bid
+            if b is None or ask_y is None:
+                continue
+            self.send(b, ex, {"race": race, "leg": leg, "side": "sell", "qty": int(qty),
+                              "price": round(1 - ask_y, 6), "kind": "close"})
 
     def send(self, b, ex, o):
         if self.r.live and ex in self.r.b_resting:

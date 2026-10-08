@@ -33,7 +33,8 @@ TRADE_AT_ZERO_EDGE = False  # scan.py only
 # The arb strategy may use only the cash above RESERVE (initial 100,000 -> 50,000 for this strategy).
 # The budget is read from the live balance before every entry, so exits automatically free it again.
 RESERVE = 50_000             # (legacy, used only when A_CAPITAL_CAP is None) core budget = cash above this
-CASH_SPLIT = {"D": 0.0, "A": 0.8, "B": 0.2, "C": 0.0}     # user, 2026-10-08: D frozen, its 50% to A (was D 0.5 / A 0.3)
+CASH_SPLIT = {"D": 0.0, "A": 1.0, "B": 0.0, "C": 0.0}     # user, 2026-10-08 05:30: all free cash to A's rotation (B only sells)
+                             # (2026-10-08 earlier: D 0 / A 0.8 / B 0.2 / C 0)
                              # (2026-10-07: D 0.5 / A 0.3 / B 0.2 / C 0, C's 5% to A)
                              # (2026-10-05: D 0.5 / A 0.25 / B 0.2 / C 0.05) share of the free cash (above
                              # HARD_RESERVE) each strategy may use for new buys, read fresh every time (so cash the
@@ -88,14 +89,18 @@ A_SMALL_FRAC = None          # user, 2026-10-08: off with the top-3 focus (small
 A_SMALL_PER_HOUR = 300
 # Top-N focus (user, 2026-10-08): A buys and swaps only in its N largest races (pairs at cost, recomputed every
 # poll); races outside them are sold only by plain exits (bids sum >= 1, "0 edge") and never fund swaps.
-A_TOP_N = 3                  # None = all races
+A_TOP_N = None               # user, 2026-10-08 05:30: focus rotation replaced by EXIT_QUEUE (was 3)
+# Exit queue (user, 2026-10-08 05:30): the first race here that still has pairs is exited (B asks for all its pairs,
+# A sells it into the bids whenever the cash can buy any cheaper pair); never bought. HOLD_RACES: no buys, no sells.
+EXIT_QUEUE = ["Alaska Senate", "Delaware Senate"]
+HOLD_RACES = ["MN-05 House race"]
 # Focus rotation (user, 2026-10-08): the focus is A_TOP_N races saved in state/focus.json; B sells the exit race
 # (smallest current edge) until it is gone, then one race with the largest total edge on its book is taken in.
-A_SMALL_POT = 10_000         # after E's reserve: A's non-big-3 pairs (all races outside the focus) up to this at cost
-A_NONFOCUS_MAX_EDGE = 0.03   # user, 2026-10-08: non-big-3 swaps and cash buys only into edges <= this (bigger = illiquid)
+A_SMALL_POT = None           # user, 2026-10-08 05:30: no cap (was 10,000 for the non-big-3 pot)
+A_NONFOCUS_MAX_EDGE = None   # user, 2026-10-08 05:30: no edge cap (was 0.03)
 INTAKE_SHORTLIST = 5         # races (best top-of-book edge) whose books are read to pick the next focus race
 MAKER_EXIT_CLIP = 2_000      # B's ask size per leg on the exit race (user: bigger clips)
-MAKER_FOCUS_BIDS = True      # user, 2026-10-08: B also rests pair bids (best bids, up to MAKER_EXIT_CLIP) on the other focus races
+MAKER_FOCUS_BIDS = False     # user, 2026-10-08 05:30: no B bids anywhere (was True)
 A_SMALL_PROTECT = True
 # D paused for A (user, 2026-10-07): while A's small-edge bucket is below this share of A's pairs at cost,
 # D's CASH_SPLIT share goes to A. D still exits and buys missing hedges (those draw on all free cash), but
@@ -134,6 +139,7 @@ B_CLOSE_BID_RATIO = 0.5    # closing: buy-back bid = ratio * clip * (1 - leftove
 # delta_i = dP(R control)/dp_i under a national-swing model calibrated to Kalshi's control price.
 D_ENABLED = True
 D_FROZEN = True              # user, 2026-10-08: D stopped, no orders; its hedged position is held to settlement (ledger kept)
+D_CLOSE = True               # user, 2026-10-08 05:30: D flat: sell every share in D's ledger into the best bids (overrides frozen)
 D_CAPITAL = 10_000           # SUSQies for D (control leg + hedges, at cost); starts with whatever cash is free
 D_ENTRY_GAP = 0.03           # enter when |Kalshi - SUSQ| on Republican control >= this
 D_EXIT_GAP = 0.01            # exit everything once it is <= this
@@ -158,7 +164,7 @@ D_LIVE_SINCE = "2026-10-04T13:30:00+00:00"   # D's fills counted from here (ledg
 
 # --- Strategy E: Kalshi-jump breakout (user, 2026-10-07; strategy_e.py, e_executor.py) ---
 # Needs the Kalshi batch cache (KALSHI_BATCH_S) and runs live only. Own ledger and own cash, independent of A.
-E_ENABLED = True
+E_ENABLED = False            # user, 2026-10-08 05:30: E off (no positions; its reserve goes back to the pool)
 E_LIVE_SINCE = "2026-10-07T15:29:00+00:00"   # E's allotment grows from here; E's fills counted from here
 E_CAPITAL = 10_000           # user: 10k, no other risk limit
 E_FILL_PER_HOUR = 150        # user, 2026-10-08 18:00: refill 150/h toward E_CAPITAL (was 1e9 = full 10k, 500/h before)
@@ -180,10 +186,12 @@ C_QUOTE_EDGE = 0.02        # quotes at least this far from the reservation price
 C_CLIP = 500               # shares per quote
 C_CUT_ONLY = True          # user, 2026-10-05: C only unwinds what it holds (no new inventory, no bids in other races)
 C_QUOTES = False           # user, 2026-10-08: C stopped, no quotes anywhere (stale ones are cancelled)
-C_DUMP_GAP = 0.15          # user, 2026-10-08 "sell everything now" (was 0.03): any bid within 0.15 of Kalshi fair, so a
+C_DUMP_GAP = 0.30          # user, 2026-10-08 05:30 "flat": any bid within 0.30 of Kalshi fair (was 0.15); keeps out of empty books
+                           # (2026-10-08 earlier: 0.15, "sell everything now" (was 0.03): any bid within 0.15 of Kalshi fair, so a
                            # thin book is not sold into far below fair; user, 2026-10-07: sell C's excess leg into the bids while they are within this of Kalshi
                            # fair (races without pairs only; the rest keeps unwinding at the best ask). None = off
-C_DUMP_PAIR_GAP = 0.0       # user, 2026-10-08: one-sided legs in pair races sold into bids at >= Kalshi fair (None = keep)
+C_DUMP_PAIR_GAP = 0.15      # user, 2026-10-08 05:30: neutralize uneven legs (excess leg into bids within 0.15 of fair), not on
+                             # the exit race (was 0.0: only at >= Kalshi fair)
 C_DUMP_PER_ROUND = 2       # races dumped per B round (each = cancel + order, inside the 30 writes/min budget)
 C_EXTRA_RACES = 5          # races we do not hold: bids on the cheap leg in the 5 with the biggest gap
 B_SKEW = 0.02             # holding: reservation price moves this far from fair at full race-cap exposure (user: slight)

@@ -308,6 +308,7 @@ class Runner:
         held = self.positions(fresh=False)
         self._a_cost = None                       # A's holdings at cost, computed once per poll when needed
         self.focus_update(held, q)
+        self.exit_queue_update(held)
         small_cost, a_cost = self.a_small_bucket(held)
         self._d_paused = self.d_paused(small_cost, a_cost)
         if self.b is not None:      # strategies B and C first: their buys are worth more than an arb entry
@@ -326,6 +327,9 @@ class Runner:
             if (config.EXIT_ENABLED and pairs >= 1 and None not in asks
                     and sum(1 - x for x in asks) >= config.EXIT_MIN_SUM - 1e-9):
                 exits.append((sum(1 - x for x in asks), b))
+        if getattr(config, "EXIT_QUEUE", None):   # exit queue: never buy the queued or held races
+            no_buy = set(config.EXIT_QUEUE) | set(getattr(config, "HOLD_RACES", []))
+            entries = [t for t in entries if t[1].name not in no_buy]
         if self.a_top is not None:   # focus: A buys in the focus races except the exit race; small edges outside
             pot_on = bool(getattr(config, "A_SMALL_POT", None))   # the focus only for the small-edge pot
             entries = [t for t in entries if (t[1].name in self.a_top and t[1].name != self.exiting)
@@ -563,6 +567,17 @@ class Runner:
         except OSError:
             pass
 
+    def exit_queue_update(self, held):
+        """EXIT_QUEUE: the current exit race is the first queued race that still has pairs."""
+        queue = getattr(config, "EXIT_QUEUE", None)
+        if not queue or getattr(config, "A_TOP_N", None):
+            return
+        pairs = {b.name: min(held.get(e, {}).get("no", 0.0) for e in b.ex) for b in self.baskets}
+        now = next((r for r in queue if pairs.get(r, 0) >= 1), None)
+        if now != self.exiting:
+            print(f"  EXIT QUEUE: exiting {now} (was {self.exiting})")
+        self.exiting = now
+
     def a_top_races(self, held):
         """Names of A's A_TOP_N largest races by pairs at cost (None = no focus). Same pairs as a_holdings_cost."""
         n = getattr(config, "A_TOP_N", None)
@@ -652,6 +667,9 @@ class Runner:
         Focus rotation: a focus race is funded only by focus races; a small-edge pot entry (outside the focus) only
         by other pot races (user, 2026-10-08: small edges rotate among themselves); held races are never sold."""
         out = []
+        queue = getattr(config, "EXIT_QUEUE", None) if not getattr(config, "A_TOP_N", None) else None
+        if queue:               # exit queue: rotating races and the current exit race fund swaps; queued-later and
+            no_sell = (set(queue) - {self.exiting}) | set(getattr(config, "HOLD_RACES", []))   # held races never
         top = getattr(self, "a_top", None)
         pot_entry = top is not None and b.name not in top
         for a in self.baskets:
@@ -659,6 +677,8 @@ class Runner:
                 continue
             pairs = min(held.get(e, {}).get("no", 0.0) for e in a.ex)
             asks = [q.get(e, {}).get("bestAsk") for e in a.ex]
+            if queue and a.name in no_sell:
+                continue
             if top is not None:
                 if pot_entry and a.name in top:
                     continue                        # non-big-3 entry: only other non-big-3 races fund it
@@ -700,7 +720,8 @@ class Runner:
         sell_floor = sum(lim_n) + config.ROTATE_MIN_GAIN
         # read the sellers' books first and plan the sales, so the swap is no bigger than they absorb
         sales, left = [], qn
-        for _, a in sorted(self.sellers(q, held, b, sell_floor), key=lambda t: -t[0]):   # cheapest to give up first
+        for _, a in sorted(self.sellers(q, held, b, sell_floor),                         # the exit race first, then
+                           key=lambda t: (t[1].name != self.exiting, -t[0])):                # cheapest to give up first
             if left < 1:
                 break
             ex = a.plan_exit(a.books(), min_sum=sell_floor, max_pairs=left, allow_below_cost=True)
