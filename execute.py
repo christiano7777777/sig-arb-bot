@@ -114,6 +114,7 @@ class Runner:
         self.focus, self.exiting, self.newest = None, None, None   # focus rotation (state/focus.json)
         self.focus_log, self._intake_t = [], 0.0
         self.exited = {}                              # race -> epoch it was fully exited (not taken back in for 24 h)
+        self._exit_sold, self._exit_next = [], 0.0    # paced bid sales of the exit race (EXIT_BID_PER_HOUR)
         if getattr(config, "REALTIME_ENABLED", False):
             self.feed = Feed(SusqClient(), self.tour["id"])    # own client: the token mint is its only call
             self.feed.start()
@@ -348,6 +349,9 @@ class Runner:
               + (f", focus {sorted(self.a_top)} exiting {self.exiting}, small-edge pot {small_cost:,.0f} (room {allow:,.0f})"
                  if self.a_top is not None else "")
               + (", D paused (its cash share goes to A)" if self._d_paused else ""))
+        # 0) push the exit race into the bids at a set pace (user, 2026-10-08 06:05)
+        if getattr(config, "EXIT_BID_PER_HOUR", None) and self.exiting and getattr(config, "EXIT_QUEUE", None):
+            self.pace_exit()
         # 1) every exit, best price first: exits are never delayed by entry work
         for b in exits:
             if STOP_FILE.exists():
@@ -566,6 +570,32 @@ class Runner:
                  "log": self.focus_log}), encoding="utf-8")
         except OSError:
             pass
+
+    def pace_exit(self):
+        """Sell up to EXIT_BID_CLIP pairs of the exit race into the bids (both legs, one atomic order) if this rolling
+        hour's EXIT_BID_PER_HOUR allows it and the last sale was at least 3600 x CLIP / PER_HOUR s ago; never at a
+        NO-bid sum below EXIT_BID_MIN_SUM. Below cost is allowed (that is the point of pushing the exit)."""
+        now = time.time()
+        if now < self._exit_next or STOP_FILE.exists():
+            return
+        self._exit_sold = [(t, n) for t, n in self._exit_sold if t > now - 3600]
+        left = config.EXIT_BID_PER_HOUR - sum(n for _, n in self._exit_sold)
+        if left < 1:
+            return
+        b = next((x for x in self.baskets if x.name == self.exiting), None)
+        if b is None or b.paused():
+            return
+        ex = b.plan_exit(b.books(), min_sum=config.EXIT_BID_MIN_SUM, max_pairs=min(config.EXIT_BID_CLIP, left),
+                         allow_below_cost=True)
+        self._exit_next = now + 3600 * config.EXIT_BID_CLIP / config.EXIT_BID_PER_HOUR
+        if ex is None:
+            print(f"  EXIT PUSH {b.name}: bids below {config.EXIT_BID_MIN_SUM} (or nothing held), retry later")
+            return
+        qs, lim, res, held_b = ex
+        print(f"  EXIT PUSH {b.name}: sell {qs} pairs into the bids at {lim} (~{res['avg_proceeds']:.4f}/pair)")
+        got = b.send_pair("sell", qs, lim, held_b)
+        self._exit_sold.append((now, got or 0))
+        self._cash = None
 
     def exit_queue_update(self, held):
         """EXIT_QUEUE: the current exit race is the first queued race that still has pairs."""

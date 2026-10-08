@@ -633,7 +633,10 @@ def maker_view(c, tid, races, legs_of, quotes, b, cash):
     fc = read_focus() if getattr(config, "A_TOP_N", None) else None
     queue = getattr(config, "EXIT_QUEUE", None) if not getattr(config, "A_TOP_N", None) else None
     if queue:                                        # exit queue: the first queued race we still hold pairs in
-        cur = next((r for r in queue if any(h[1] == r for h in held)), None)
+        allheld = {race: {party[0]: max(-p["quantity"], 0) for party, p in legs.items()} for race, legs in races.items()}
+        cur = next((r for r in queue if min(allheld.get(r, {}).get("D", 0), allheld.get(r, {}).get("R", 0)) >= 1), None)
+        if cur and not any(h[1] == cur for h in held):          # below MAKER_MIN_PAIRS: still the exit race
+            held.append((min(allheld[cur]["D"], allheld[cur]["R"]), cur, allheld[cur]))
         skip = set(queue) | set(getattr(config, "HOLD_RACES", []))
         fc = {"exiting": cur, "focus": [cur] + [n for n in pair_ask if n not in skip]} if cur else None
     exit_mode = bool(fc and fc.get("exiting"))
@@ -644,6 +647,8 @@ def maker_view(c, tid, races, legs_of, quotes, b, cash):
         legs = legs_of[race]
         books = {x: noq(legs[x]) for x in "DR"}
         cheapest = min((v for n, v in pair_ask.items() if (n in others if exit_mode else n != race)), default=None)
+        if queue and getattr(config, "EXIT_ASK_ALWAYS", False):
+            cheapest = 0.0
         cr = c_rows.get(race, {})
         fav, room = "either", max(0.0, config.MAKER_OVER_CAP - abs(no.get("D", 0) - no.get("R", 0)))
         if cr.get("p_favourite") is not None and cr["p_favourite"] >= config.B_MIN_FAVOURITE:

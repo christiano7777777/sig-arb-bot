@@ -94,6 +94,12 @@ A_TOP_N = None               # user, 2026-10-08 05:30: focus rotation replaced b
 # A sells it into the bids whenever the cash can buy any cheaper pair); never bought. HOLD_RACES: no buys, no sells.
 EXIT_QUEUE = ["Alaska Senate", "Delaware Senate"]
 HOLD_RACES = ["MN-05 House race"]
+# Push the exit race (user, 2026-10-08 06:05): B's asks always out (no "cheaper pair elsewhere" condition), and A sells
+# EXIT_BID_CLIP pairs into the bids every 3600 x CLIP / PER_HOUR seconds, never at a NO-bid sum below EXIT_BID_MIN_SUM
+EXIT_ASK_ALWAYS = True
+EXIT_BID_PER_HOUR = 2_000
+EXIT_BID_CLIP = 500
+EXIT_BID_MIN_SUM = 0.94
 # Focus rotation (user, 2026-10-08): the focus is A_TOP_N races saved in state/focus.json; B sells the exit race
 # (smallest current edge) until it is gone, then one race with the largest total edge on its book is taken in.
 A_SMALL_POT = None           # user, 2026-10-08 05:30: no cap (was 10,000 for the non-big-3 pot)

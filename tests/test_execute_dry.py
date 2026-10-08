@@ -90,6 +90,7 @@ def make_runner(fake, min_edge=0.005, exposure=None, capital=50_000, reserve=50_
     config.A_SMALL_POT, config.C_DUMP_PAIR_GAP, config.MAKER_EXIT_CLIP, config.INTAKE_SHORTLIST = None, None, 2_000, 5
     config.MAKER_FOCUS_BIDS, config.E_ALLOT_BASE, config.A_NONFOCUS_MAX_EDGE = False, None, None
     config.EXIT_QUEUE, config.HOLD_RACES, config.D_CLOSE = None, [], False
+    config.EXIT_ASK_ALWAYS, config.EXIT_BID_PER_HOUR, config.EXIT_BID_CLIP, config.EXIT_BID_MIN_SUM = False, None, 500, 0.94
     config.D_PAUSE_UNTIL_A_SMALL = None
     config.C_LIMIT, config.C_SKEW, config.C_SKEW_MAX, config.C_QUOTE_EDGE, config.C_CLIP = 2_000, 0.10, 0.25, 0.02, 500
     config.C_EXTRA_RACES = 5
@@ -1673,6 +1674,48 @@ def test_d_close_sells_its_whole_ledger_at_the_best_bid():
     r.d.step(r.quotes())
     sells = [b for _, b in r.sent if "d-close" in b.get("idempotencyKey", "")]
     assert len(sells) == 1 and sells[0]["action"] == "sell" and sells[0]["quantity"] == 150
+
+
+# ---- push the exit race (user, 2026-10-08 06:05) -----------------------------------------------------------
+def _exit_sells(fake, r, race):
+    return [b for _, b in r.sent if b["legs"][0]["action"] == "sell"
+            and b["legs"][0]["exchangeId"] == fake.ex_of(race, "D")]
+
+
+def test_exit_push_sells_one_chunk_into_the_bids_then_waits():
+    fake, r = _queue_runner()
+    config.EXIT_BID_PER_HOUR, config.EXIT_BID_CLIP, config.EXIT_BID_MIN_SUM = 2_000, 500, 0.94
+    r.exit_queue_update(r.positions())
+    r.pace_exit()
+    sells = _exit_sells(fake, r, "Alaska Senate")
+    assert len(sells) == 1 and sells[0]["legs"][0]["quantity"] == 500           # one 500-pair chunk, bids 0.995
+    r.pace_exit()
+    assert len(_exit_sells(fake, r, "Alaska Senate")) == 1                       # next one only after 15 min
+    r._exit_next = 0
+    r.pace_exit()
+    assert len(_exit_sells(fake, r, "Alaska Senate")) == 2
+
+
+def test_exit_push_never_below_the_bid_floor():
+    fake, r = _queue_runner()
+    config.EXIT_BID_PER_HOUR, config.EXIT_BID_CLIP, config.EXIT_BID_MIN_SUM = 2_000, 500, 0.999   # bids sum 0.995
+    r.exit_queue_update(r.positions())
+    r.pace_exit()
+    assert not _exit_sells(fake, r, "Alaska Senate")
+
+
+def test_exit_push_b_asks_always_out():
+    fake = FakeClient({"Alaska Senate": DE, "Other race": EDGE_01}, balance=5_000)   # other pair 0.99 > Alaska 0.97
+    config.B_RACES = {"Alaska Senate": {"event": "A", "D": "A-D", "R": "A-R"}}
+    r = make_runner(fake, b_enabled=True)
+    config.EXIT_QUEUE, config.HOLD_RACES = ["Alaska Senate"], []
+    r.exiting = "Alaska Senate"
+    b = next(x for x in r.baskets if x.name == "Alaska Senate")
+    act = [(b, {"D": fake.ex_of("Alaska Senate", "D"), "R": fake.ex_of("Alaska Senate", "R")}, {"D": 250, "R": 250})]
+    assert r.b.queue_exit_quotes(r.quotes(), act) == {}                          # nothing cheaper elsewhere: no asks
+    config.EXIT_ASK_ALWAYS = True
+    want = r.b.queue_exit_quotes(r.quotes(), act)
+    assert sorted((k[1], o["qty"]) for k, (_, o) in want.items()) == [("sell", 250), ("sell", 250)]
 
 
 if __name__ == "__main__":
