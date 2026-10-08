@@ -1745,6 +1745,20 @@ def test_pure_arb_cap_applies_without_an_exit_queue():
     assert buys and sum(b["legs"][0]["quantity"] for b in buys) <= 200           # 9,800 held -> at most 200 more
 
 
+def test_market_at_cap_does_not_block_swaps_into_others():
+    # 2026-10-08 16:13: the best-edge market sat at the cap, took every swap try, and nothing traded
+    edge_03 = {"D": ([(0.5, DEEP)], [(0.99, 5)]), "R": ([(0.53, DEEP)], [(0.99, 5)])}      # NO asks sum 0.97
+    fake = FakeClient({"Capped": EDGE_04, "Capped 2": edge_03, "Room": EDGE_02, "Seller": SELLER_0995},
+                      balance=50_000 + 10)                                       # no free cash: swaps only
+    fake.held = {fake.ex_of(n, x): (-10_000, 4_800.0) for n in ("Capped", "Capped 2") for x in "DR"}
+    fake.held.update({fake.ex_of("Seller", x): (-1_000, 480.0) for x in "DR"})   # two capped markets = both swap slots
+    r = make_runner(fake, race_cap=None)
+    config.EXIT_QUEUE, config.A_ROTATE_MAX_PAIRS = None, 10_000
+    r.poll()
+    buys = [b for _, b in r.sent if b["legs"][0]["action"] == "buy"]
+    assert buys and all(b["legs"][0]["exchangeId"] == fake.ex_of("Room", "D") for b in buys)
+
+
 def test_c_flat_sells_extra_leg_at_best_bid_when_kalshi_untrusted():
     fake, r = _b_runner(0, 410, balance=5_000, kalshi_ok=False)          # 410 NO_R alone, Kalshi untrusted
     config.C_DUMP_GAP, config.C_DUMP_UNTRUSTED = 0.30, True

@@ -334,6 +334,10 @@ class Runner:
             if not self.exit_target():
                 no_buy |= set(config.EXIT_QUEUE)
             entries = [t for t in entries if t[1].name not in no_buy]
+        cap_pairs = getattr(config, "A_ROTATE_MAX_PAIRS", None)
+        if cap_pairs:   # markets at the cap can take nothing: skip them, or their swap tries use up the swap budget
+            entries = [t for t in entries                         # (2026-10-08 16:13: no trades for 20 min)
+                       if min(held.get(e, {}).get("no", 0.0) for e in t[1].ex) <= cap_pairs - 1]
         if self.a_top is not None:   # focus: A buys in the focus races except the exit race; small edges outside
             pot_on = bool(getattr(config, "A_SMALL_POT", None))   # the focus only for the small-edge pot
             entries = [t for t in entries if (t[1].name in self.a_top and t[1].name != self.exiting)

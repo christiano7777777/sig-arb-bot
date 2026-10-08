@@ -344,8 +344,8 @@ function render(d) {
   const pnl = d.value_at_settlement - d.initial;
   const mtm = d.mark_to_market - d.initial;
   document.getElementById("cards").innerHTML =
-    card("Value at settlement", fmt(d.value_at_settlement), `${pnl >= 0 ? "+" : ""}${fmt(pnl)} vs ${fmt(d.initial, 0)} · C, D and E positions at cost`, pnl >= 0 ? "pos" : "neg") +
-    (d.value_fair != null ? card("With C, D and E at Kalshi fair", fmt(d.value_fair),
+    card("Value at settlement", fmt(d.value_at_settlement), `${pnl >= 0 ? "+" : ""}${fmt(pnl)} vs ${fmt(d.initial, 0)} · Breakout positions at cost`, pnl >= 0 ? "pos" : "neg") +
+    (d.value_fair != null ? card("With Breakout at Kalshi fair", fmt(d.value_fair),
                 (v => `${v >= 0 ? "+" : ""}${fmt(v)} vs start`)(d.value_fair - d.initial)) : "") +
     card("Cash", fmt(d.cash), (d.cash_split ? `new cash: ${d.focus ? "E's 10k first, then " : ""}${["A", "B", "C", "D"].filter(k => d.cash_split[k]).map(k => `${k} ${Math.round(d.cash_split[k] * 100)}%`).join(" · ")} · ` : "") + (d.extra_enabled
       ? `${fmt(Math.max(d.cash - d.reserve, 0))} for any edge · ${fmt(Math.max(d.cash - d.hard_reserve, 0))} for edge ≥ ${d.extra_min_edge}`
@@ -367,7 +367,7 @@ function render(d) {
   document.getElementById("sumA").innerHTML =
     (d.a_cap != null ? card("Capital used", fmt(d.a_capital, 0), `of ${fmt(d.a_cap, 0)} cap · ${d.a_capital > d.a_cap ? "over: no new buys, swaps only" : fmt(d.a_cap - d.a_capital, 0) + " left to buy"}`,
                             d.a_capital > d.a_cap ? "neg" : "") : card("Capital used", fmt(d.a_capital, 0), "pairs at cost · " + (d.focus ? `new cash: E's 10k first, then the ${fmt(d.small_pot, 0)} small-edge pot, then the focus races`
-       : "no cap" + (d.cash_split ? `, ${Math.round((d.cash_split.A || 0) * 100)}% of new cash` : "")))) +
+       : (d.exit_target ? `at most ${fmt(d.exit_target, 0)} pairs per market` : "no cap") + (d.cash_split ? `, ${Math.round((d.cash_split.A || 0) * 100)}% of new cash` : "")))) +
     card("Pairs held", fmt(d.pairs, 0), `${d.rows.filter(r => r.pairs > 0).length} races`) +
     card("Locked on held pairs", "+" + fmt(locked), "pairs pay 1 − what they cost") +
     card("Trades, last 24h", fmt(((a24.buy || {}).orders || 0) + ((a24.swap || {}).orders || 0) + ((a24.exit || {}).orders || 0), 0),
@@ -659,8 +659,8 @@ const ELIVE = SRC.replace("snapshot.json", "e.json");      // strategy E's live 
 let elive = null;
 let hist = [], initial = 100000;
 const SERIES = [
-  { key: "settle", name: "Value at settlement (pairs pay 1; C, D and E positions at cost)", color: "var(--s1)" },
-  { key: "fair", name: "Value with C, D and E positions at Kalshi fair", color: "var(--s3)" },
+  { key: "settle", name: "Value at settlement (pairs pay 1; Breakout positions at cost)", color: "var(--s1)" },
+  { key: "fair", name: "Value with Breakout positions at Kalshi fair", color: "var(--s3)" },
   { key: "mtm", name: "Mark-to-market (current prices)", color: "var(--s2)" },
 ];
 
@@ -697,14 +697,15 @@ function drawChart() {
     return;
   }
   const ts = pts.map(p => new Date(p.t).getTime());
-  const vals = pts.flatMap(p => [p.settle, p.mtm, p.fair]).filter(v => v != null).concat([initial]);
-  let lo = Math.min(...vals), hi = Math.max(...vals);
-  const pad = (hi - lo) * 0.08 || 50; lo -= pad; hi += pad;
+  const vals = pts.flatMap(p => [p.settle, p.fair]).filter(v => v != null);   // scaled to the settlement curve; mark-to-market is clipped
+  // y-axis centred on the window's first value, scaled to the window's own moves (user, 2026-10-09)
+  const mid = pts[0].settle, half = Math.max(...vals.map(v => Math.abs(v - mid))) * 1.1 || 5;
+  let lo = mid - half, hi = mid + half;
   const t0 = ts[0], t1 = ts[ts.length - 1];
   const x = t => L + (W - L - R) * (t - t0) / ((t1 - t0) || 1);
   const y = v => T + (H - T - B) * (1 - (v - lo) / (hi - lo));
 
-  let g = "";
+  let g = `<defs><clipPath id="plotclip"><rect x="${L}" y="${T}" width="${W - L - R}" height="${H - T - B}"/></clipPath></defs>`;
   for (const v of niceTicks(lo, hi)) {
     g += `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="var(--grid)" stroke-width="1"/>`
        + `<text x="${L - 6}" y="${y(v) + 4}" text-anchor="end">${fmt(v, 0)}</text>`;
@@ -716,8 +717,9 @@ function drawChart() {
                                    : d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
     g += `<text x="${x(t)}" y="${H - 6}" text-anchor="${k === 0 ? "start" : k === 3 ? "end" : "middle"}">${lab}</text>`;
   }
-  g += `<line x1="${L}" x2="${W - R}" y1="${y(initial)}" y2="${y(initial)}" stroke="var(--muted)" stroke-width="1" stroke-dasharray="4 4"/>`
-     + `<text x="${W - R + 6}" y="${y(initial) + 4}">start ${fmt(initial, 0)}</text>`;
+  if (initial >= lo && initial <= hi)                 // the Cup's starting value, only when it is inside the window's range
+    g += `<line x1="${L}" x2="${W - R}" y1="${y(initial)}" y2="${y(initial)}" stroke="var(--muted)" stroke-width="1" stroke-dasharray="4 4"/>`
+       + `<text x="${W - R + 6}" y="${y(initial) + 4}">start ${fmt(initial, 0)}</text>`;
   const lastOf = key => { for (let i = pts.length - 1; i >= 0; i--) if (pts[i][key] != null) return [i, pts[i][key]]; return null; };
   for (const s of SERIES) {
     // a missing value (no mark-to-market before live recording began) breaks the line
@@ -730,8 +732,9 @@ function drawChart() {
       pen = true; prevY = yi;
     });
     if (!d) continue;
-    g += `<path d="${d}" fill="none" stroke="${s.color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
+    g += `<path d="${d}" fill="none" stroke="${s.color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" clip-path="url(#plotclip)"/>`;
     const [li, last] = lastOf(s.key);
+    if (last < lo || last > hi) continue;               // outside this window's range (e.g. mark-to-market): legend only
     g += `<circle cx="${x(ts[li])}" cy="${y(last)}" r="4" fill="${s.color}" stroke="var(--card)" stroke-width="2"/>`
        + `<text x="${W - R + 8}" y="${y(last) + 4}" style="fill:var(--text)">${fmt(last, 0)}</text>`;
   }
@@ -824,13 +827,14 @@ function drawStrat(k) {
     svg.innerHTML = `<text x="${W / 2}" y="${H / 2}" text-anchor="middle" style="fill:var(--muted);font-size:12px">Waiting for data…</text>`;
     return;
   }
-  const ts = pts.map(p => new Date(p.t).getTime()), vals = pts.map(p => p.v).concat([0]);
-  let lo = Math.min(...vals), hi = Math.max(...vals); const pad = (hi - lo) * 0.08 || 10; lo -= pad; hi += pad;
+  const ts = pts.map(p => new Date(p.t).getTime()), vals = pts.map(p => p.v);
+  const mid = pts[0].v, half = Math.max(...vals.map(v => Math.abs(v - mid))) * 1.1 || 5;   // centred on the window start
+  let lo = mid - half, hi = mid + half;
   const t0 = ts[0], t1 = ts[ts.length - 1];
   const x = t => L + (W - L - R) * (t - t0) / ((t1 - t0) || 1), y = v => T + (H - T - B) * (1 - (v - lo) / (hi - lo));
   let g = "";
   for (const v of niceTicks(lo, hi)) g += `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="var(--grid)"/><text x="${L - 6}" y="${y(v) + 4}" text-anchor="end" style="fill:var(--muted);font-size:11px">${fmt(v, 0)}</text>`;
-  g += `<line x1="${L}" x2="${W - R}" y1="${y(0)}" y2="${y(0)}" stroke="var(--muted)" stroke-dasharray="4 4"/>`;
+  if (lo <= 0 && hi >= 0) g += `<line x1="${L}" x2="${W - R}" y1="${y(0)}" y2="${y(0)}" stroke="var(--muted)" stroke-dasharray="4 4"/>`;
   for (let i = 0; i <= 3; i++) {
     const t = t0 + (t1 - t0) * i / 3, dt = new Date(t);
     const lab = (t1 - t0) > 36 * 3600e3 ? dt.toLocaleDateString([], { month: "short", day: "numeric" }) : dt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
