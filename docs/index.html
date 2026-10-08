@@ -509,6 +509,7 @@ function renderRotation(d) {
     document.getElementById("aintro").innerHTML = `<span class="badge ba">A</span> Pure arb: buys one NO share of each party
       (pays ≥ 1 whoever wins) below 1, in every market, highest edge first, with all free cash except Breakout's reserve.
       Swaps whenever the swap itself gains. ${cap ? `At most ${fmt(cap, 0)} pairs per market.` : "No per-market cap."}
+      ${d.priority_pairs ? `Markets above ${fmt(d.priority_pairs, 0)} pairs are bought last and sold first to fund swaps (only at a gain).` : ""}
       Exits at bids ≥ 1. No directional risk.`;
     return;
   }

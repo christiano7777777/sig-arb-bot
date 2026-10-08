@@ -342,7 +342,8 @@ class Runner:
             pot_on = bool(getattr(config, "A_SMALL_POT", None))   # the focus only for the small-edge pot
             entries = [t for t in entries if (t[1].name in self.a_top and t[1].name != self.exiting)
                        or (pot_on and t[1].name not in self.a_top and t[0] <= self.pot_edge_cap() + 1e-9)]
-        entries.sort(key=lambda t: -t[0])                            # higher edge first
+        over = self.over_priority(held)
+        entries.sort(key=lambda t: (t[1].name in over, -t[0]))      # under A_PRIORITY_PAIRS first, then higher edge
         exits = [b for _, b in sorted(exits, key=lambda t: -t[0])]  # best sell price first
         allow = self.a_small_allowance(small_cost, a_cost)
         if allow > 0:   # paced small edges get first claim on A's cash, up to the allowance (A_SMALL_PER_HOUR)
@@ -407,7 +408,8 @@ class Runner:
                 blocked.append(b)
         if blocked:
             print(f"  out of budget (A room {self.cash_room():.2f}) for {len(blocked)} race(s)")
-            blocked.sort(key=lambda b: -(self.top_edge(q, b) or 0))  # swaps: highest edge first
+            over = self.over_priority(held)                          # swaps: under A_PRIORITY_PAIRS first, then edge
+            blocked.sort(key=lambda b: (b.name in over, -(self.top_edge(q, b) or 0)))
         # 3) a few swaps, highest edge first
         if config.ROTATE_ENABLED:
             done = 0
@@ -429,6 +431,13 @@ class Runner:
                     if self.rotate(b, q, held):
                         done += 1
                         self._no_swap[key] = time.time()   # cleared by any change in the key
+
+    def over_priority(self, held):
+        """Markets holding more than A_PRIORITY_PAIRS pairs (user, 2026-10-09): bought last, sold first in swaps."""
+        lim = getattr(config, "A_PRIORITY_PAIRS", None)
+        if not lim:
+            return set()
+        return {b.name for b in self.baskets if min(held.get(e, {}).get("no", 0.0) for e in b.ex) > lim}
 
     @staticmethod
     def top_edge(q, b):
@@ -759,7 +768,9 @@ class Runner:
             return False
         # size the new pair only down to the levels the best seller can pay for:
         # buy levels priced <= best_S - ROTATE_MIN_GAIN (walking deeper would price out every seller)
-        best_s = max(s for s, _ in possible)
+        over = self.over_priority(held)      # markets above A_PRIORITY_PAIRS fund it first (user, 2026-10-09): their
+        pref = [s for s, a in possible if a.name in over]      # best bid sets the buy limit, so they are not priced out
+        best_s = max(pref) if pref else max(s for s, _ in possible)
         edge_needed = max(config.ROTATE_ENTRY_EDGE, 1.0 - (best_s - config.ROTATE_MIN_GAIN))
         p = b.plan(b.books(), min_edge=edge_needed, budget=float("inf"))
         if p is None:
@@ -769,9 +780,9 @@ class Runner:
         # >= that + ROTATE_MIN_GAIN for the swap to keep its gain whatever the buy fills at
         sell_floor = sum(lim_n) + config.ROTATE_MIN_GAIN
         # read the sellers' books first and plan the sales, so the swap is no bigger than they absorb
-        sales, left = [], qn
-        for _, a in sorted(self.sellers(q, held, b, sell_floor),                         # the exit race first, then
-                           key=lambda t: (t[1].name != self.exiting, -t[0])):                # cheapest to give up first
+        sales, left = [], qn                 # the exit race, then markets above A_PRIORITY_PAIRS (user, 2026-10-09),
+        for _, a in sorted(self.sellers(q, held, b, sell_floor),         # then cheapest to give up first; all of them
+                           key=lambda t: (t[1].name != self.exiting, t[1].name not in over, -t[0])):   # >= sell_floor
             if left < 1:
                 break
             ex = a.plan_exit(a.books(), min_sum=sell_floor, max_pairs=left, allow_below_cost=True)

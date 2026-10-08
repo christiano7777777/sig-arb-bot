@@ -91,7 +91,7 @@ def make_runner(fake, min_edge=0.005, exposure=None, capital=50_000, reserve=50_
     config.MAKER_FOCUS_BIDS, config.E_ALLOT_BASE, config.A_NONFOCUS_MAX_EDGE = False, None, None
     config.EXIT_QUEUE, config.HOLD_RACES, config.D_CLOSE = None, [], False
     config.EXIT_ASK_ALWAYS, config.EXIT_BID_PER_HOUR, config.EXIT_BID_CLIP, config.EXIT_BID_MIN_SUM = False, None, 500, 0.94
-    config.A_ROTATE_MAX_PAIRS = None
+    config.A_ROTATE_MAX_PAIRS, config.A_PRIORITY_PAIRS = None, None
     config.C_DUMP_UNTRUSTED = False
     config.D_PAUSE_UNTIL_A_SMALL = None
     config.C_LIMIT, config.C_SKEW, config.C_SKEW_MAX, config.C_QUOTE_EDGE, config.C_CLIP = 2_000, 0.10, 0.25, 0.02, 500
@@ -1821,6 +1821,43 @@ def test_exit_b_asks_only_the_part_above_5000():
     act = [(b, {"D": fake.ex_of("Delaware Senate", "D"), "R": fake.ex_of("Delaware Senate", "R")}, {"D": 33_458, "R": 33_458})]
     want = r.b.queue_exit_quotes(r.quotes(), act)
     assert {o["qty"] for _, o in want.values()} == {28_458}
+
+
+# ---- markets above 5,000 pairs: bought last, sold first in swaps (user, 2026-10-09) -----------------------
+def test_buys_markets_under_5000_first():
+    fake = FakeClient({"Over": EDGE_04, "Under": EDGE_02}, balance=50_000 + 600)   # cash for one small buy only
+    fake.held = {fake.ex_of("Over", x): (-6_000, 2_880.0) for x in "DR"}
+    r = make_runner(fake, race_cap=None)
+    config.A_ROTATE_MAX_PAIRS, config.A_PRIORITY_PAIRS = 10_000, 5_000
+    r.poll()
+    buys = [b for _, b in r.sent if b["legs"][0]["action"] == "buy"]
+    assert buys and buys[0]["legs"][0]["exchangeId"] == fake.ex_of("Under", "D")   # lower edge, but under 5,000
+
+
+def test_swaps_sell_markets_over_5000_first_but_only_at_a_gain():
+    room = {"D": ([(0.5, DEEP)], [(0.99, 5)]), "R": ([(0.525, DEEP)], [(0.99, 5)])}      # NO asks sum 0.975
+    big = {"D": ([(0.4, 5)], [(0.5, DEEP)]), "R": ([(0.4, 5)], [(0.51, DEEP)])}         # NO bids sum 0.99
+    fake = FakeClient({"Room": room, "Big": big, "Small": SELLER_0995}, balance=50_000 + 10)
+    fake.held = {fake.ex_of("Big", x): (-6_000, 2_880.0) for x in "DR"}
+    fake.held.update({fake.ex_of("Small", x): (-1_000, 480.0) for x in "DR"})
+    r = make_runner(fake, race_cap=None)
+    config.A_ROTATE_MAX_PAIRS, config.A_PRIORITY_PAIRS = 10_000, 5_000
+    r.poll()
+    sells = [b for _, b in r.sent if b["legs"][0]["action"] == "sell"]
+    assert sells and sells[0]["legs"][0]["exchangeId"] == fake.ex_of("Big", "D")   # 0.99 < 0.995, but over 5,000
+    buys = [b for _, b in r.sent if b["legs"][0]["action"] == "buy"]
+    assert buys and sum(l["price"] for l in buys[0]["legs"]) + config.ROTATE_MIN_GAIN <= 0.99 + 1e-9   # still a gain
+
+
+def test_swaps_never_sell_an_over_5000_market_below_the_gain_floor():
+    seller_099 = {"D": ([(0.4, 5)], [(0.5, DEEP)]), "R": ([(0.4, 5)], [(0.52, DEEP)])}   # 0.98 = Room's ask: no gain
+    fake = FakeClient({"Room": EDGE_02, "Big": seller_099, "Small": SELLER_0995}, balance=50_000 + 10)
+    fake.held = {fake.ex_of("Big", x): (-6_000, 2_880.0) for x in "DR"}
+    fake.held.update({fake.ex_of("Small", x): (-1_000, 480.0) for x in "DR"})
+    r = make_runner(fake, race_cap=None)
+    config.A_ROTATE_MAX_PAIRS, config.A_PRIORITY_PAIRS = 10_000, 5_000
+    r.poll()
+    assert not [b for _, b in r.sent if b["legs"][0]["exchangeId"] == fake.ex_of("Big", "D")]
 
 
 if __name__ == "__main__":

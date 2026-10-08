@@ -178,6 +178,7 @@ def build(c):
         "d_frozen": getattr(config, "D_FROZEN", False), "d_close": getattr(config, "D_CLOSE", False),
         "exit_queue": getattr(config, "EXIT_QUEUE", None), "hold_races": getattr(config, "HOLD_RACES", None),
         "exit_target": getattr(config, "A_ROTATE_MAX_PAIRS", None) or 0,
+        "priority_pairs": getattr(config, "A_PRIORITY_PAIRS", None),
         "extra_enabled": getattr(config, "EXTRA_CAPITAL_ENABLED", False),
         "extra_min_edge": getattr(config, "EXTRA_MIN_EDGE", None),
         "initial": t["initialBalance"],

@@ -94,6 +94,7 @@ A_TOP_N = None               # user, 2026-10-08 05:30: focus rotation replaced b
 # A sells it into the bids whenever the cash can buy any cheaper pair); never bought. HOLD_RACES: no buys, no sells.
 EXIT_QUEUE = None   # user, 2026-10-08 16:00: exits done (all at <= 5,000); was ["Delaware Senate", "MN-05 House race"]   # user, 2026-10-08: MN-05 after Delaware (Alaska done: rotating)
 HOLD_RACES = []              # (MN-05 was held; queued races are neither bought nor sold until their turn)
+A_PRIORITY_PAIRS = 5_000     # user, 2026-10-09: markets above this are bought last and sold first to fund swaps
 A_ROTATE_MAX_PAIRS = 10_000  # user, 2026-10-08 16:00 "higher the cap" (was 5,000)   # user, 2026-10-08: rotating markets hold at most this many pairs each (cash buys and swaps)
 # Push the exit race (user, 2026-10-08 06:05): B's asks always out (no "cheaper pair elsewhere" condition), and A sells
 # EXIT_BID_CLIP pairs into the bids every 3600 x CLIP / PER_HOUR seconds, never at a NO-bid sum below EXIT_BID_MIN_SUM
