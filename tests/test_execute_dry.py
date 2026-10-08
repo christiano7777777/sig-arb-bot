@@ -1752,6 +1752,52 @@ def test_c_flat_sells_the_exit_race_extra_leg_too():
     assert takes and takes[0]["exchangeId"] == fake.ex_of("Delaware Senate", "D") and takes[0]["action"] == "sell"
 
 
+# ---- exit only down to the 5,000 cap (user, 2026-10-08 07:25) ----------------------------------------------
+def test_exit_queue_down_to_5000_then_next_then_other_over_cap_markets():
+    fake, r = _queue_runner()                       # Alaska 2,500, Delaware 36,000, MN-05 57,000, Rot 800
+    config.A_ROTATE_MAX_PAIRS, config.HOLD_RACES = 5_000, []
+    config.EXIT_QUEUE = ["Alaska Senate", "Delaware Senate", "MN-05 House race"]
+    r.exit_queue_update(r.positions())
+    assert r.exiting == "Delaware Senate"           # Alaska already under 5,000: skipped
+    for leg in "DR":
+        fake.held[fake.ex_of("Delaware Senate", leg)] = (-5_000, 2_350.0)
+        fake.held[fake.ex_of("Rot race", leg)] = (-6_000, 2_820.0)    # a rotating market over the cap
+    r._pos = None
+    r.exit_queue_update(r.positions())
+    assert r.exiting == "MN-05 House race" and r.over_cap == {"MN-05 House race", "Rot race"}
+    for leg in "DR":
+        fake.held[fake.ex_of("MN-05 House race", leg)] = (-5_000, 2_350.0)
+    r._pos = None
+    r.exit_queue_update(r.positions())
+    assert r.exiting == "Rot race"                  # after the queue: the other market over 5,000
+
+
+def test_exit_push_sells_only_the_part_above_5000():
+    fake, r = _queue_runner()
+    config.A_ROTATE_MAX_PAIRS, config.HOLD_RACES = 5_000, []
+    config.EXIT_QUEUE = ["Delaware Senate"]
+    config.EXIT_BID_PER_HOUR, config.EXIT_BID_CLIP, config.EXIT_BID_MIN_SUM = 2_000, 500, 0.94
+    for leg in "DR":
+        fake.held[fake.ex_of("Delaware Senate", leg)] = (-5_300, 2_491.0)
+    r._pos = None
+    r.exit_queue_update(r.positions())
+    r.pace_exit()
+    sells = _exit_sells(fake, r, "Delaware Senate")
+    assert len(sells) == 1 and sells[0]["legs"][0]["quantity"] == 300
+
+
+def test_exit_b_asks_only_the_part_above_5000():
+    fake = FakeClient({"Delaware Senate": DE}, balance=5_000)
+    config.B_RACES = {"Delaware Senate": {"event": "SENATEDE-26", "D": "SENATEDE-26-D", "R": "SENATEDE-26-R"}}
+    r = make_runner(fake, b_enabled=True)
+    config.EXIT_QUEUE, config.HOLD_RACES, config.EXIT_ASK_ALWAYS, config.A_ROTATE_MAX_PAIRS = ["Delaware Senate"], [], True, 5_000
+    r.exiting = "Delaware Senate"
+    b = r.baskets[0]
+    act = [(b, {"D": fake.ex_of("Delaware Senate", "D"), "R": fake.ex_of("Delaware Senate", "R")}, {"D": 33_458, "R": 33_458})]
+    want = r.b.queue_exit_quotes(r.quotes(), act)
+    assert {o["qty"] for _, o in want.values()} == {28_458}
+
+
 if __name__ == "__main__":
     import contextlib
     import io

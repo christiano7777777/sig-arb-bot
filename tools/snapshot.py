@@ -177,6 +177,7 @@ def build(c):
         "c_dump_gap": getattr(config, "C_DUMP_GAP", None), "c_dump_pair_gap": getattr(config, "C_DUMP_PAIR_GAP", None),
         "d_frozen": getattr(config, "D_FROZEN", False), "d_close": getattr(config, "D_CLOSE", False),
         "exit_queue": getattr(config, "EXIT_QUEUE", None), "hold_races": getattr(config, "HOLD_RACES", None),
+        "exit_target": getattr(config, "A_ROTATE_MAX_PAIRS", None) or 0,
         "extra_enabled": getattr(config, "EXTRA_CAPITAL_ENABLED", False),
         "extra_min_edge": getattr(config, "EXTRA_MIN_EDGE", None),
         "initial": t["initialBalance"],
@@ -634,7 +635,10 @@ def maker_view(c, tid, races, legs_of, quotes, b, cash):
     queue = getattr(config, "EXIT_QUEUE", None) if not getattr(config, "A_TOP_N", None) else None
     if queue:                                        # exit queue: the first queued race we still hold pairs in
         allheld = {race: {party[0]: max(-p["quantity"], 0) for party, p in legs.items()} for race, legs in races.items()}
-        cur = next((r for r in queue if min(allheld.get(r, {}).get("D", 0), allheld.get(r, {}).get("R", 0)) >= 1), None)
+        tgt = getattr(config, "A_ROTATE_MAX_PAIRS", None) or 0
+        npairs = {r: min(v.get("D", 0), v.get("R", 0)) for r, v in allheld.items()}
+        order = list(queue) + sorted((r for r, n in npairs.items() if n > tgt and r not in queue), key=lambda r: -npairs[r])
+        cur = next((r for r in order if npairs.get(r, 0) >= tgt + 1), None)
         if cur and not any(h[1] == cur for h in held):          # below MAKER_MIN_PAIRS: still the exit race
             held.append((min(allheld[cur]["D"], allheld[cur]["R"]), cur, allheld[cur]))
         skip = set(queue) | set(getattr(config, "HOLD_RACES", []))
@@ -658,7 +662,8 @@ def maker_view(c, tid, races, legs_of, quotes, b, cash):
         bk = {x: {"bids": [(books[x]["bid"], 1)] if books[x]["bid"] is not None else [],
                   "asks": [(books[x]["ask"], 1)] if books[x]["ask"] is not None else []} for x in "DR"}
         want = (pair_maker.pair_quotes(bk, {"D": no.get("D", 0), "R": no.get("R", 0)}, cheapest, 0.0,
-                                       clip=(pairs if queue else config.MAKER_EXIT_CLIP), bids_on=False)
+                                       clip=(max(1, int(pairs - (getattr(config, "A_ROTATE_MAX_PAIRS", None) or 0)))
+                                             if queue else config.MAKER_EXIT_CLIP), bids_on=False)
                 if exit_mode and race == fc["exiting"] else
                 pair_maker.pair_quotes(bk, {"D": no.get("D", 0), "R": no.get("R", 0)}, None, spend,
                                        clip=config.MAKER_EXIT_CLIP) if exit_mode else

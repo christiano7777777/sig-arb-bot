@@ -245,7 +245,9 @@ class BExecutor:
             if b.name != exiting:
                 continue
             books = {x: self.top_book(q, ex[x]) for x in "DR"}
-            allp = max(1, int(min(h["D"], h["R"])))
+            allp = int(min(h["D"], h["R"]) - self.r.exit_target())    # only the part above the target (5,000)
+            if allp < 1:
+                continue
             if getattr(config, "EXIT_ASK_ALWAYS", False):
                 cheapest = 0.0                      # push the exit (user, 2026-10-08 06:05): asks out whatever else costs
             for o in pair_maker.pair_quotes(books, h, cheapest, 0.0, clip=allp, bids_on=False):

@@ -115,6 +115,7 @@ class Runner:
         self.focus_log, self._intake_t = [], 0.0
         self.exited = {}                              # race -> epoch it was fully exited (not taken back in for 24 h)
         self._exit_sold, self._exit_next = [], 0.0    # paced bid sales of the exit race (EXIT_BID_PER_HOUR)
+        self.over_cap = set()                         # markets above the exit target (exit queue)
         if getattr(config, "REALTIME_ENABLED", False):
             self.feed = Feed(SusqClient(), self.tour["id"])    # own client: the token mint is its only call
             self.feed.start()
@@ -329,7 +330,9 @@ class Runner:
                     and sum(1 - x for x in asks) >= config.EXIT_MIN_SUM - 1e-9):
                 exits.append((sum(1 - x for x in asks), b))
         if getattr(config, "EXIT_QUEUE", None):   # exit queue: never buy the queued or held races
-            no_buy = set(config.EXIT_QUEUE) | set(getattr(config, "HOLD_RACES", []))
+            no_buy = set(getattr(self, "over_cap", set())) | set(getattr(config, "HOLD_RACES", []))
+            if not self.exit_target():
+                no_buy |= set(config.EXIT_QUEUE)
             entries = [t for t in entries if t[1].name not in no_buy]
         if self.a_top is not None:   # focus: A buys in the focus races except the exit race; small edges outside
             pot_on = bool(getattr(config, "A_SMALL_POT", None))   # the focus only for the small-edge pot
@@ -585,7 +588,10 @@ class Runner:
         b = next((x for x in self.baskets if x.name == self.exiting), None)
         if b is None or b.paused():
             return
-        ex = b.plan_exit(b.books(), min_sum=config.EXIT_BID_MIN_SUM, max_pairs=min(config.EXIT_BID_CLIP, left),
+        above = math.floor(min(self.positions(fresh=False).get(e, {}).get("no", 0.0) for e in b.ex) - self.exit_target())
+        if above < 1:
+            return
+        ex = b.plan_exit(b.books(), min_sum=config.EXIT_BID_MIN_SUM, max_pairs=min(config.EXIT_BID_CLIP, left, above),
                          allow_below_cost=True)
         self._exit_next = now + 3600 * config.EXIT_BID_CLIP / config.EXIT_BID_PER_HOUR
         if ex is None:
@@ -597,13 +603,22 @@ class Runner:
         self._exit_sold.append((now, got or 0))
         self._cash = None
 
+    @staticmethod
+    def exit_target():
+        """Pairs an exited market keeps: the rotating cap (user, 2026-10-08: exit down to 5,000), else 0."""
+        return getattr(config, "A_ROTATE_MAX_PAIRS", None) or 0
+
     def exit_queue_update(self, held):
-        """EXIT_QUEUE: the current exit race is the first queued race that still has pairs."""
+        """EXIT_QUEUE: the current exit race is the first queued race above exit_target(), then any other market above
+        it (largest first). self.over_cap: every market above it (not bought; sold only in its turn)."""
         queue = getattr(config, "EXIT_QUEUE", None)
         if not queue or getattr(config, "A_TOP_N", None):
             return
+        target = self.exit_target()
         pairs = {b.name: min(held.get(e, {}).get("no", 0.0) for e in b.ex) for b in self.baskets}
-        now = next((r for r in queue if pairs.get(r, 0) >= 1), None)
+        self.over_cap = {r for r, n in pairs.items() if n >= target + 1}
+        order = list(queue) + sorted((r for r in self.over_cap if r not in queue), key=lambda r: -pairs[r])
+        now = next((r for r in order if pairs.get(r, 0) >= target + 1), None)
         if now != self.exiting:
             print(f"  EXIT QUEUE: exiting {now} (was {self.exiting})")
         self.exiting = now
@@ -699,7 +714,8 @@ class Runner:
         out = []
         queue = getattr(config, "EXIT_QUEUE", None) if not getattr(config, "A_TOP_N", None) else None
         if queue:               # exit queue: rotating races and the current exit race fund swaps; queued-later and
-            no_sell = (set(queue) - {self.exiting}) | set(getattr(config, "HOLD_RACES", []))   # held races never
+            later = set(getattr(self, "over_cap", set())) if self.exit_target() else set(queue)   # wait their turn
+            no_sell = (later - {self.exiting}) | set(getattr(config, "HOLD_RACES", []))   # held races never
         top = getattr(self, "a_top", None)
         pot_entry = top is not None and b.name not in top
         for a in self.baskets:
@@ -843,7 +859,7 @@ class Basket:
             return None
         race_room = float("inf") if config.PER_RACE_CAP is None else config.PER_RACE_CAP - race_cost
         cap_pairs = getattr(config, "A_ROTATE_MAX_PAIRS", None)
-        if cap_pairs and getattr(config, "EXIT_QUEUE", None) and self.name not in config.EXIT_QUEUE:
+        if cap_pairs and getattr(config, "EXIT_QUEUE", None):
             room_pairs = cap_pairs - min(no)                 # rotating market: at most A_ROTATE_MAX_PAIRS pairs
             if room_pairs < 1:
                 return None
