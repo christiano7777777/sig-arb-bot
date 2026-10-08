@@ -92,7 +92,7 @@ A_SMALL_PER_HOUR = 300
 A_TOP_N = None               # user, 2026-10-08 05:30: focus rotation replaced by EXIT_QUEUE (was 3)
 # Exit queue (user, 2026-10-08 05:30): the first race here that still has pairs is exited (B asks for all its pairs,
 # A sells it into the bids whenever the cash can buy any cheaper pair); never bought. HOLD_RACES: no buys, no sells.
-EXIT_QUEUE = ["Alaska Senate", "Delaware Senate", "MN-05 House race"]   # user, 2026-10-08: MN-05 after Delaware
+EXIT_QUEUE = ["Delaware Senate", "MN-05 House race"]   # user, 2026-10-08: MN-05 after Delaware (Alaska done: rotating)
 HOLD_RACES = []              # (MN-05 was held; queued races are neither bought nor sold until their turn)
 A_ROTATE_MAX_PAIRS = 5_000   # user, 2026-10-08: rotating markets hold at most this many pairs each (cash buys and swaps)
 # Push the exit race (user, 2026-10-08 06:05): B's asks always out (no "cheaper pair elsewhere" condition), and A sells

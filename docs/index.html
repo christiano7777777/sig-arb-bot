@@ -491,10 +491,10 @@ function renderRotation(d) {
     const order = d.exit_queue.concat(rows.filter(r => r.pairs > tgt && !d.exit_queue.includes(r.race)).sort((a, b) => b.pairs - a.pairs).map(r => r.race));
     const cur = order.find(r => (rows.find(x => x.race === r) || {}).pairs > tgt), ex = rows.find(r => r.race === cur);
     document.querySelector("#rotation h2").innerHTML = 'Exit queue <span class="n">(since 2026-10-08 05:30 UTC)</span>';
-    document.getElementById("aintro").innerHTML = `<span class="badge ba">A</span> Exits the heavy markets one at a time
-      (${d.exit_queue.map(esc).join(" → ")}): B offers all pairs of the current one at the best asks, and A sells it into the
-      bids whenever the cash can buy any cheaper pair. ${(d.hold_races || []).map(esc).join(", ") || "–"}: held (no buys, no
-      sells). Every other market rotates: all free cash, any edge, highest first. Plain exits (bids ≥ 1) everywhere.`;
+    const pending = order.filter(r => (rows.find(x => x.race === r) || {}).pairs > tgt);
+    document.getElementById("aintro").innerHTML = `<span class="badge ba">A</span> Exits the heavy markets one at a time, each
+      down to ${fmt(tgt, 0)} pairs (${pending.map(esc).join(" → ") || "none left"}): B offers the part above ${fmt(tgt, 0)} at the
+      best asks, and A sells it into the bids in chunks. A market at or under ${fmt(tgt, 0)} pairs rotates like the others.${(d.hold_races || []).length ? " " + d.hold_races.map(esc).join(", ") + ": held (no buys, no sells)." : ""} Every other market rotates: all free cash, any edge, highest first. Plain exits (bids ≥ 1) everywhere.`;
     document.getElementById("rotcards").innerHTML =
       card("Exiting now", cur ? esc(cur) : "–", ex ? `${fmt(ex.pairs, 0)} pairs · ${fmt(ex.pairs - tgt, 0)} to sell (keeps ${fmt(tgt, 0)}) · bid sum ${fmt(ex.sell_sum, 3)} · ask sum ${fmt(ex.buy_sum, 3)}` : "queue done") +
       card("Queue", order.filter(r => (rows.find(x => x.race === r) || {}).pairs > tgt).length, order.filter(r => (rows.find(x => x.race === r) || {}).pairs > tgt).map(r => (r === cur ? "▶ " : "") + esc(r)).join(" → ") + ` · each exits down to ${fmt(tgt, 0)} pairs`) +
