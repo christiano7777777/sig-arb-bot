@@ -86,6 +86,21 @@ def quotes(books, p, held, cash):
     return {"exposure": exposure, "reservation": {x: round(r[x], 4) for x in "DR"}, "orders": out}
 
 
+def dump_top(books, held):
+    """No usable Kalshi price (user, 2026-10-08: flat anyway): sell the larger leg's excess at the best bid only, at
+    most the size there (no walking down an unknown book). Returns a take order or None."""
+    leg = "D" if held["D"] > held["R"] else "R"
+    excess = abs(held["D"] - held["R"])
+    if excess < 1 or not books[leg]["bids"]:
+        return None
+    px, size = books[leg]["bids"][0]
+    qty = math.floor(min(excess, size, held[leg]) + 1e-9)
+    if qty < 1:
+        return None
+    return {"leg": leg, "side": "sell", "price": round(px, 6), "qty": qty, "adds": False, "kind": "take",
+            "edge_vs_fair": 0.0}
+
+
 def dump(books, p, held, gap=None):
     """Fast unwind (user, 2026-10-07): sell C's excess leg into the bids at prices >= Kalshi fair - C_DUMP_GAP.
     books[x]["bids"]: full NO bid ladder of leg x, best first. The excess leg is the one the cutting quotes sell:

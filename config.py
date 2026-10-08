@@ -199,6 +199,7 @@ C_DUMP_GAP = 0.30          # user, 2026-10-08 05:30 "flat": any bid within 0.30 
                            # fair (races without pairs only; the rest keeps unwinding at the best ask). None = off
 C_DUMP_PAIR_GAP = 0.15      # user, 2026-10-08 05:30: neutralize uneven legs (excess leg into bids within 0.15 of fair), not on
                              # the exit race (was 0.0: only at >= Kalshi fair)
+C_DUMP_UNTRUSTED = True     # user, 2026-10-08 07:00 "C all sold": also when Kalshi is untrusted, at the best bid only
 C_DUMP_PER_ROUND = 2       # races dumped per B round (each = cancel + order, inside the 30 writes/min budget)
 C_EXTRA_RACES = 5          # races we do not hold: bids on the cheap leg in the 5 with the biggest gap
 B_SKEW = 0.02             # holding: reservation price moves this far from fair at full race-cap exposure (user: slight)

@@ -123,11 +123,20 @@ class BExecutor:
             for (b, ex, h), k in zip(active, fairs):
                 if len(dumped) >= config.C_DUMP_PER_ROUND:
                     break
-                if b.name == getattr(self.r, "exiting", None):
-                    continue                        # the exit race's legs are left to its exit (user, 2026-10-08)
                 pair_race = min(h["D"], h["R"]) >= 1      # one-sided legs there: C_DUMP_PAIR_GAP (user, 2026-10-08)
                 gap = getattr(config, "C_DUMP_PAIR_GAP", None) if pair_race else config.C_DUMP_GAP
-                if not k["ok"] or gap is None:
+                if gap is None:
+                    continue
+                if not k["ok"]:                     # Kalshi untrusted (spread too wide): best bid only (user, 2026-10-08)
+                    if not getattr(config, "C_DUMP_UNTRUSTED", False) or abs(h["D"] - h["R"]) < 1:
+                        continue
+                    o = strategy_c.dump_top({x: self.full_book(ex[x]) for x in "DR"}, h)
+                    if o is None:
+                        continue
+                    self.r.cancel_all([ex[o["leg"]]])
+                    self.r.b_resting.discard(ex[o["leg"]])
+                    self.send(b, ex[o["leg"]], o, o["qty"])
+                    dumped.add(b.name)
                     continue
                 if strategy_c.dump({x: self.top_book(q, ex[x]) for x in "DR"}, k["p"], h, gap) is None:
                     continue                        # best bid already too far below fair: no book read

@@ -92,6 +92,7 @@ def make_runner(fake, min_edge=0.005, exposure=None, capital=50_000, reserve=50_
     config.EXIT_QUEUE, config.HOLD_RACES, config.D_CLOSE = None, [], False
     config.EXIT_ASK_ALWAYS, config.EXIT_BID_PER_HOUR, config.EXIT_BID_CLIP, config.EXIT_BID_MIN_SUM = False, None, 500, 0.94
     config.A_ROTATE_MAX_PAIRS = None
+    config.C_DUMP_UNTRUSTED = False
     config.D_PAUSE_UNTIL_A_SMALL = None
     config.C_LIMIT, config.C_SKEW, config.C_SKEW_MAX, config.C_QUOTE_EDGE, config.C_CLIP = 2_000, 0.10, 0.25, 0.02, 500
     config.C_EXTRA_RACES = 5
@@ -1731,6 +1732,24 @@ def test_rotating_market_capped_at_5000_pairs():
     r.sent.clear(); r._pos = None
     r.poll()
     assert not [b for _, b in r.sent if b["legs"][0]["action"] == "buy"]       # at the cap: no more buys
+
+
+def test_c_flat_sells_extra_leg_at_best_bid_when_kalshi_untrusted():
+    fake, r = _b_runner(0, 410, balance=5_000, kalshi_ok=False)          # 410 NO_R alone, Kalshi untrusted
+    config.C_DUMP_GAP, config.C_DUMP_UNTRUSTED = 0.30, True
+    r.b.step(r.quotes(), r.positions())
+    takes = [o for o in _b_orders(r) if o["idempotencyKey"].endswith("c-take")]
+    assert len(takes) == 1 and takes[0]["exchangeId"] == fake.ex_of("Delaware Senate", "R")
+    assert takes[0]["price"] == 0.84 and takes[0]["quantity"] == 410            # best NO_R bid, top level only
+
+
+def test_c_flat_sells_the_exit_race_extra_leg_too():
+    fake, r = _b_runner(5_000, 600, balance=5_000, p={"D": 0.986, "R": 0.014})   # 4,400 extra NO_D in the exit race
+    config.C_DUMP_GAP, config.C_DUMP_PAIR_GAP, config.EXIT_QUEUE = 0.30, 0.15, ["Delaware Senate"]
+    r.exiting = "Delaware Senate"
+    r.b.step(r.quotes(), r.positions())
+    takes = [o for o in _b_orders(r) if o["idempotencyKey"].endswith("c-take")]
+    assert takes and takes[0]["exchangeId"] == fake.ex_of("Delaware Senate", "D") and takes[0]["action"] == "sell"
 
 
 if __name__ == "__main__":
