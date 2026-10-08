@@ -159,7 +159,7 @@ def build(c):
         "history_complete": dict(SYNC),          # fills/trades loaded back to the start (else the split is partial)
         "d": d_view,
         "e": e_view,
-        "focus": read_focus(),                   # focus rotation state written by the bot (state/focus.json)
+        "focus": read_focus() if getattr(config, "A_TOP_N", None) else None,                   # focus rotation state written by the bot (state/focus.json)
         "b": b,
         "activity": activity,
         "recent": recent,

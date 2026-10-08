@@ -88,11 +88,11 @@
   <div id="warnings"></div>
   <div class="tabs" role="tablist">
     <button role="tab" data-tab="overview">Overview</button>
-    <button role="tab" data-tab="a"><span class="badge ba">A</span> Arbitrage</button>
-    <button role="tab" data-tab="m"><span class="badge bm">B</span> Pair maker</button>
-    <button role="tab" data-tab="b"><span class="badge bb">C</span> Kalshi market making</button>
-    <button role="tab" data-tab="d"><span class="badge bd">D</span> Senate stat arb</button>
-    <button role="tab" data-tab="e"><span class="badge be">E</span> Kalshi breakout</button>
+    <button role="tab" data-tab="a"><span class="badge ba">A</span> Pure arb</button>
+    <button role="tab" data-tab="m" hidden><span class="badge bm">B</span> Pair maker</button>
+    <button role="tab" data-tab="b" hidden><span class="badge bb">C</span> Kalshi market making</button>
+    <button role="tab" data-tab="d" hidden><span class="badge bd">D</span> Senate stat arb</button>
+    <button role="tab" data-tab="e"><span class="badge be">E</span> Breakout</button>
   </div>
 
   <section data-panel="overview">
@@ -111,22 +111,22 @@
     </div>
     <h2>By strategy</h2>
     <div class="split">
-      <div class="panel pa"><div class="ptitle"><span class="badge ba">A</span> NO+NO arbitrage <span class="n">no directional risk</span></div>
+      <div class="panel pa"><div class="ptitle"><span class="badge ba">A</span> Pure arb <span class="n">no directional risk</span></div>
         <div class="cards" id="sumA"></div></div>
-      <div class="panel pm"><div class="ptitle"><span class="badge bm">B</span> Pair maker <span class="n" id="msub">resting pair quotes</span></div>
+      <div class="panel pm" style="display:none"><div class="ptitle"><span class="badge bm">B</span> Pair maker <span class="n" id="msub">resting pair quotes</span></div>
         <div class="cards" id="sumM"></div></div>
-      <div class="panel pb"><div class="ptitle"><span class="badge bb">C</span> Kalshi market making <span class="n" id="csub">two-sided, inventory-limited</span></div>
+      <div class="panel pb" style="display:none"><div class="ptitle"><span class="badge bb">C</span> Kalshi market making <span class="n" id="csub">two-sided, inventory-limited</span></div>
         <div class="cards" id="sumB"></div></div>
-      <div class="panel pd"><div class="ptitle"><span class="badge bd">D</span> Senate stat arb <span class="n" id="dsub">delta-hedged</span></div>
+      <div class="panel pd" style="display:none"><div class="ptitle"><span class="badge bd">D</span> Senate stat arb <span class="n" id="dsub">delta-hedged</span></div>
         <div class="cards" id="sumD"></div></div>
-      <div class="panel pe"><div class="ptitle"><span class="badge be">E</span> Kalshi breakout <span class="n">own 10k, directional</span></div>
+      <div class="panel pe"><div class="ptitle"><span class="badge be">E</span> Breakout <span class="n">own 10k, directional</span></div>
         <div class="cards" id="sumE"></div></div>
     </div>
     <p class="note" id="recon"></p>
   </section>
 
   <section data-panel="a" hidden>
-    <h2>A arbitrage equity <span class="n">(P&amp;L since the Cup began)</span></h2>
+    <h2>Pure arb equity <span class="n">(P&amp;L since the Cup began)</span></h2>
     <div class="chartcard" style="margin-bottom:18px">
       <div class="winbar" id="wA" role="group" aria-label="Time window">
         <button data-w="1">1h</button><button data-w="6">6h</button><button data-w="24">24h</button>
@@ -283,19 +283,19 @@
   <section data-panel="e" hidden>
     <p class="strat" id="eintro"><span class="badge be">E</span> Buys a leg when its Kalshi price jumps and SUSQ has not followed yet;
       sells when SUSQ catches up (back to its usual gap to Kalshi) or Kalshi gives back half the jump; otherwise holds.</p>
-    <h2>E Kalshi breakout equity <span class="n">(P&amp;L since E went live)</span></h2>
+    <h2>Breakout equity <span class="n">(P&amp;L since E went live)</span></h2>
     <div class="chartcard" style="margin-bottom:18px">
       <div class="winbar" id="wE" role="group" aria-label="Time window">
         <button data-w="1">1h</button><button data-w="6">6h</button><button data-w="24">24h</button>
         <button data-w="168">7d</button><button data-w="0">All</button>
       </div>
       <div class="legend" id="lE"></div>
-      <div class="chartwrap"><svg id="cE" style="width:100%;height:220px;display:block;touch-action:pan-y" role="img" aria-label="E Kalshi breakout P&amp;L over time"></svg><div class="tip" id="tE" hidden></div></div>
+      <div class="chartwrap"><svg id="cE" style="width:100%;height:220px;display:block;touch-action:pan-y" role="img" aria-label="Breakout P&amp;L over time"></svg><div class="tip" id="tE" hidden></div></div>
       <p class="note" id="nE" style="margin:4px 0 0"></p>
     </div>
 
     <div class="cards" id="ecards"></div>
-    <h2>E holds</h2>
+    <h2>Breakout holds</h2>
     <div class="tablewrap" style="margin-bottom:18px">
       <table>
         <thead><tr><th>Race</th><th>Leg</th><th>Shares</th><th>Avg cost</th><th>SUSQ bid / ask</th><th>Kalshi fair</th><th>P&amp;L at bid</th></tr></thead>
@@ -309,14 +309,14 @@
         <tbody id="ewatch"></tbody>
       </table>
     </div>
-    <h2>E events <span class="n">(signals, fills, exits since the bot's last restart)</span></h2>
+    <h2>Breakout events <span class="n">(signals, fills, exits since the bot's last restart)</span></h2>
     <div class="tablewrap" style="margin-bottom:18px">
       <table>
         <thead><tr><th>Time</th><th>Kind</th><th>Race</th><th>Leg</th><th>Detail</th></tr></thead>
         <tbody id="eevents"></tbody>
       </table>
     </div>
-    <h2>E trades</h2>
+    <h2>Breakout trades</h2>
     <div class="tablewrap">
       <table>
         <thead><tr><th>Time</th><th>Kind</th><th>Side</th><th>Race</th><th>Leg</th><th>Shares</th><th>Price</th></tr></thead>
@@ -392,7 +392,7 @@ function render(d) {
   const sn = d.strategy_now || {}, ssum = Object.values(sn).reduce((s, v) => s + (v || 0), 0);
   document.getElementById("recon").innerHTML = !Object.keys(sn).length ? "" : loading()
     ? "Strategy values: trade history still loading after a bot restart."
-    : `Strategy values (A ${fmt(sn.A)}, B ${fmt(sn.B)}, C ${fmt(sn.C)}, D ${fmt(sn.D)}${sn.E != null ? `, E ${fmt(sn.E)}` : ""}${sn.U ? `, unattributed ${fmt(sn.U)}` : ""}) sum to
+    : `Strategy values (pure arb ${fmt(sn.A)}, breakout ${fmt(sn.E || 0)}; deleted B ${fmt(sn.B)}, C ${fmt(sn.C)}, D ${fmt(sn.D)}${sn.U ? `, unattributed ${fmt(sn.U)}` : ""}) sum to
        <b>${(ssum >= 0 ? "+" : "") + fmt(ssum)}</b> vs <b>${(pnl >= 0 ? "+" : "") + fmt(pnl)}</b> total P&amp;L at settlement:
        difference ${(ssum - pnl >= 0 ? "+" : "") + fmt(ssum - pnl)}. The split is an estimate from a replay of the trade history
        (B, C, D at SUSQ mid) and does not reconcile with the account yet.`;
@@ -504,7 +504,14 @@ function renderRotation(d) {
     return;
   }
   box.hidden = !f;
-  if (!f) return;
+  if (!f) {                             // pure arb (2026-10-08 16:00): every market rotates under one cap
+    const cap = d.exit_target || 0;
+    document.getElementById("aintro").innerHTML = `<span class="badge ba">A</span> Pure arb: buys one NO share of each party
+      (pays ≥ 1 whoever wins) below 1, in every market, highest edge first, with all free cash except Breakout's reserve.
+      Swaps whenever the swap itself gains. ${cap ? `At most ${fmt(cap, 0)} pairs per market.` : "No per-market cap."}
+      Exits at bids ≥ 1. No directional risk.`;
+    return;
+  }
   document.getElementById("rotlog").closest(".tablewrap").hidden = false;
   const rows = d.rows.filter(r => r.pairs > 0);
   const ex = rows.find(r => r.race === f.exiting);
@@ -758,7 +765,7 @@ function drawChart() {
 }
 // ---------- one equity curve per strategy (in its own tab, own time window) ----------
 const SCOL = { A: "var(--s1)", B: "var(--s4)", C: "var(--s3)", D: "var(--s2)", E: "var(--s5)" };
-const SNAME = { A: "A arbitrage", B: "B pair maker", C: "C Kalshi market making", D: "D Senate stat arb", E: "E Kalshi breakout" };
+const SNAME = { A: "Pure arb", B: "B pair maker", C: "C Kalshi market making", D: "D Senate stat arb", E: "Breakout" };
 const sWin = { A: 0, B: 0, C: 0, D: 0, E: 0 };
 ["A", "B", "C", "D", "E"].forEach(k => document.getElementById("w" + k).addEventListener("click", ev => {
   const btn = ev.target.closest("button"); if (!btn) return;
@@ -859,7 +866,7 @@ window.addEventListener("resize", () => { drawChart(); drawAllStrats(); });
 
 // ---------- tabs ----------
 function showTab(t) {
-  if (!["overview", "a", "m", "b", "d", "e"].includes(t)) t = "overview";
+  if (!["overview", "a", "e"].includes(t)) t = "overview";     // B, C, D deleted (2026-10-08 16:00)
   document.querySelectorAll(".tabs button").forEach(b => b.setAttribute("aria-selected", String(b.dataset.tab === t)));
   document.querySelectorAll("section[data-panel]").forEach(s => s.hidden = s.dataset.panel !== t);
   try { localStorage.setItem("tab", t); } catch (e) { /* storage may be blocked */ }

@@ -859,7 +859,7 @@ class Basket:
             return None
         race_room = float("inf") if config.PER_RACE_CAP is None else config.PER_RACE_CAP - race_cost
         cap_pairs = getattr(config, "A_ROTATE_MAX_PAIRS", None)
-        if cap_pairs and getattr(config, "EXIT_QUEUE", None):
+        if cap_pairs:                                         # every market (user, 2026-10-08 16:00)
             room_pairs = cap_pairs - min(no)                 # rotating market: at most A_ROTATE_MAX_PAIRS pairs
             if room_pairs < 1:
                 return None

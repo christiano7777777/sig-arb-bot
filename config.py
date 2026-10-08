@@ -92,13 +92,13 @@ A_SMALL_PER_HOUR = 300
 A_TOP_N = None               # user, 2026-10-08 05:30: focus rotation replaced by EXIT_QUEUE (was 3)
 # Exit queue (user, 2026-10-08 05:30): the first race here that still has pairs is exited (B asks for all its pairs,
 # A sells it into the bids whenever the cash can buy any cheaper pair); never bought. HOLD_RACES: no buys, no sells.
-EXIT_QUEUE = ["Delaware Senate", "MN-05 House race"]   # user, 2026-10-08: MN-05 after Delaware (Alaska done: rotating)
+EXIT_QUEUE = None   # user, 2026-10-08 16:00: exits done (all at <= 5,000); was ["Delaware Senate", "MN-05 House race"]   # user, 2026-10-08: MN-05 after Delaware (Alaska done: rotating)
 HOLD_RACES = []              # (MN-05 was held; queued races are neither bought nor sold until their turn)
-A_ROTATE_MAX_PAIRS = 5_000   # user, 2026-10-08: rotating markets hold at most this many pairs each (cash buys and swaps)
+A_ROTATE_MAX_PAIRS = 10_000  # user, 2026-10-08 16:00 "higher the cap" (was 5,000)   # user, 2026-10-08: rotating markets hold at most this many pairs each (cash buys and swaps)
 # Push the exit race (user, 2026-10-08 06:05): B's asks always out (no "cheaper pair elsewhere" condition), and A sells
 # EXIT_BID_CLIP pairs into the bids every 3600 x CLIP / PER_HOUR seconds, never at a NO-bid sum below EXIT_BID_MIN_SUM
-EXIT_ASK_ALWAYS = True
-EXIT_BID_PER_HOUR = 2_000
+EXIT_ASK_ALWAYS = False      # user, 2026-10-08 16:00: exits done
+EXIT_BID_PER_HOUR = None     # user, 2026-10-08 16:00: exits done (was 2,000)
 EXIT_BID_CLIP = 500
 EXIT_BID_MIN_SUM = 0.94
 # Focus rotation (user, 2026-10-08): the focus is A_TOP_N races saved in state/focus.json; B sells the exit race
@@ -125,7 +125,7 @@ ROTATE_MAX_PER_MIN = 6       # with ~1 poll/s: at most this many swap attempts a
 # buy the leg that is cheap, within caps. Quotes never make the pair worse for others: our NO ask
 # only at/above the leg's best NO ask; our NO bid + the other leg's best NO bid < 1.
 # A race stays active while either leg has shares; it is left only when both legs are 0.
-B_ENABLED = True           # user, 2026-10-04: deploy live on the 4 races
+B_ENABLED = False  # user, 2026-10-08 16:00: B and C deleted (was True)           # user, 2026-10-04: deploy live on the 4 races
 TAGS_SINCE = "2026-10-04T09:30:00+00:00"   # orders tagged by strategy from here (see Runner.tag_orders)
 B_LIVE_SINCE = "2026-10-04T07:34:30+00:00"   # first live B round (dashboard counts B trades from here)
 B_INTERVAL_S = 20          # one B round per 20 s (realtime); quotes rest MAKER_LIFE_S and are re-posted only on change
@@ -144,7 +144,7 @@ B_CLOSE_BID_RATIO = 0.5    # closing: buy-back bid = ratio * clip * (1 - leftove
 # --- Strategy D: Senate-control stat arb (user, 2026-10-04; strategy_d.py, stat_model.py) ---
 # Trade SUSQ "U.S. Senate" toward Kalshi's control price, delta-hedged with the state Senate races:
 # delta_i = dP(R control)/dp_i under a national-swing model calibrated to Kalshi's control price.
-D_ENABLED = True
+D_ENABLED = False             # user, 2026-10-08 16:00: D deleted (ledger empty)
 D_FROZEN = True              # user, 2026-10-08: D stopped, no orders; its hedged position is held to settlement (ledger kept)
 D_CLOSE = True               # user, 2026-10-08 05:30: D flat: sell every share in D's ledger into the best bids (overrides frozen)
 D_CAPITAL = 10_000           # SUSQies for D (control leg + hedges, at cost); starts with whatever cash is free
@@ -171,11 +171,11 @@ D_LIVE_SINCE = "2026-10-04T13:30:00+00:00"   # D's fills counted from here (ledg
 
 # --- Strategy E: Kalshi-jump breakout (user, 2026-10-07; strategy_e.py, e_executor.py) ---
 # Needs the Kalshi batch cache (KALSHI_BATCH_S) and runs live only. Own ledger and own cash, independent of A.
-E_ENABLED = False            # user, 2026-10-08 05:30: E off (no positions; its reserve goes back to the pool)
+E_ENABLED = True  # user, 2026-10-08 16:00: reserve cash for Breakout (was False)            # user, 2026-10-08 05:30: E off (no positions; its reserve goes back to the pool)
 E_LIVE_SINCE = "2026-10-07T15:29:00+00:00"   # E's allotment grows from here; E's fills counted from here
 E_CAPITAL = 10_000           # user: 10k, no other risk limit
 E_FILL_PER_HOUR = 150        # user, 2026-10-08 18:00: refill 150/h toward E_CAPITAL (was 1e9 = full 10k, 500/h before)
-E_ALLOT_BASE = 3_000         # user, 2026-10-08 18:00: E's reserve 3k now (was 10k: 6.6k idle while E had no signal)
+E_ALLOT_BASE = 10_000  # user, 2026-10-08 16:00: full 10k reserved now (was 3,000)         # user, 2026-10-08 18:00: E's reserve 3k now (was 10k: 6.6k idle while E had no signal)
 E_FILL_SINCE = "2026-10-07T18:01:00+00:00"   # allotment = min(E_CAPITAL, E_ALLOT_BASE + E_FILL_PER_HOUR x hours since this)
 E_INTERVAL_S = 10            # one E round per Kalshi batch refresh
 E_JUMP = 0.03                # Kalshi fair of a leg (NO price) up at least this ...
@@ -204,7 +204,7 @@ C_DUMP_PER_ROUND = 2       # races dumped per B round (each = cancel + order, in
 C_EXTRA_RACES = 5          # races we do not hold: bids on the cheap leg in the 5 with the biggest gap
 B_SKEW = 0.02             # holding: reservation price moves this far from fair at full race-cap exposure (user: slight)
 B_TOTAL_CAP_FRAC = 0.30    # max shares at risk over all races, as a fraction of portfolio value (user: 30%)
-MAKER_ENABLED = True       # pair maker (pair_maker.py): resting two-sided pair quotes on the largest held races
+MAKER_ENABLED = False  # user, 2026-10-08 16:00 (was True)       # pair maker (pair_maker.py): resting two-sided pair quotes on the largest held races
 MAKER_RACES = 3            # user, 2026-10-08: top 3 only (was 10); how many held races (largest by pairs) get pair quotes
 MAKER_MIN_PAIRS = 500      # ... and only races holding at least this many pairs
 MAKER_CLIP = 500           # pairs per side per race

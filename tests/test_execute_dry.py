@@ -1734,6 +1734,17 @@ def test_rotating_market_capped_at_5000_pairs():
     assert not [b for _, b in r.sent if b["legs"][0]["action"] == "buy"]       # at the cap: no more buys
 
 
+def test_pure_arb_cap_applies_without_an_exit_queue():
+    # user, 2026-10-08 16:00: exits done (EXIT_QUEUE None), the cap (now 10,000) still holds in every market
+    fake = FakeClient({"Rot race": EDGE_02}, balance=50_000 + 20_000)
+    fake.held = {fake.ex_of("Rot race", "D"): (-9_800, 0.49 * 9_800), fake.ex_of("Rot race", "R"): (-9_800, 0.49 * 9_800)}
+    r = make_runner(fake, race_cap=None)
+    config.EXIT_QUEUE, config.A_ROTATE_MAX_PAIRS = None, 10_000
+    r.poll()
+    buys = [b for _, b in r.sent if b["legs"][0]["action"] == "buy"]
+    assert buys and sum(b["legs"][0]["quantity"] for b in buys) <= 200           # 9,800 held -> at most 200 more
+
+
 def test_c_flat_sells_extra_leg_at_best_bid_when_kalshi_untrusted():
     fake, r = _b_runner(0, 410, balance=5_000, kalshi_ok=False)          # 410 NO_R alone, Kalshi untrusted
     config.C_DUMP_GAP, config.C_DUMP_UNTRUSTED = 0.30, True
