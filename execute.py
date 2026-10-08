@@ -769,29 +769,34 @@ class Runner:
         # size the new pair only down to the levels the best seller can pay for:
         # buy levels priced <= best_S - ROTATE_MIN_GAIN (walking deeper would price out every seller)
         over = self.over_priority(held)      # markets above A_PRIORITY_PAIRS fund it first (user, 2026-10-09): their
-        pref = [s for s, a in possible if a.name in over]      # best bid sets the buy limit, so they are not priced out
-        best_s = max(pref) if pref else max(s for s, _ in possible)
-        edge_needed = max(config.ROTATE_ENTRY_EDGE, 1.0 - (best_s - config.ROTATE_MIN_GAIN))
-        p = b.plan(b.books(), min_edge=edge_needed, budget=float("inf"))
-        if p is None:
-            return True
-        qn, lim_n, _, held_b = p
-        # worst case paid per new pair = the limit sum (slack included), so held pairs must sell at
-        # >= that + ROTATE_MIN_GAIN for the swap to keep its gain whatever the buy fills at
-        sell_floor = sum(lim_n) + config.ROTATE_MIN_GAIN
-        # read the sellers' books first and plan the sales, so the swap is no bigger than they absorb
-        sales, left = [], qn                 # the exit race, then markets above A_PRIORITY_PAIRS (user, 2026-10-09),
-        for _, a in sorted(self.sellers(q, held, b, sell_floor),         # then cheapest to give up first; all of them
-                           key=lambda t: (t[1].name != self.exiting, t[1].name not in over, -t[0])):   # >= sell_floor
-            if left < 1:
+        pref = [s for s, a in possible if a.name in over]      # best bid sets the buy limit, so they are not priced out;
+        best_all = max(s for s, _ in possible)                 # if they cannot fund it, the best seller sets it as before
+        tries = ([max(pref)] if pref else []) + ([best_all] if not pref or best_all > max(pref) + 1e-9 else [])
+        books_b = b.books()
+        for best_s in tries:
+            edge_needed = max(config.ROTATE_ENTRY_EDGE, 1.0 - (best_s - config.ROTATE_MIN_GAIN))
+            p = b.plan(books_b, min_edge=edge_needed, budget=float("inf"))
+            if p is None:
+                continue
+            qn, lim_n, _, held_b = p
+            # worst case paid per new pair = the limit sum (slack included), so held pairs must sell at
+            # >= that + ROTATE_MIN_GAIN for the swap to keep its gain whatever the buy fills at
+            sell_floor = sum(lim_n) + config.ROTATE_MIN_GAIN
+            # read the sellers' books first and plan the sales, so the swap is no bigger than they absorb
+            sales, left = [], qn             # the exit race, then markets above A_PRIORITY_PAIRS (user, 2026-10-09),
+            for _, a in sorted(self.sellers(q, held, b, sell_floor),     # then cheapest to give up first; all of them
+                               key=lambda t: (t[1].name != self.exiting, t[1].name not in over, -t[0])):   # >= floor
+                if left < 1:
+                    break
+                ex = a.plan_exit(a.books(), min_sum=sell_floor, max_pairs=left, allow_below_cost=True)
+                if ex is not None:
+                    sales.append((a, ex))
+                    left -= ex[0]
+            q_swap = qn - left
+            if q_swap >= 1:
                 break
-            ex = a.plan_exit(a.books(), min_sum=sell_floor, max_pairs=left, allow_below_cost=True)
-            if ex is not None:
-                sales.append((a, ex))
-                left -= ex[0]
-        q_swap = qn - left
-        if q_swap < 1:
             print(f"  ROTATE {b.name}: no held race can sell at >= {sell_floor:.3f}")
+        else:
             return True
         names = [a.name for a, _ in sales]
         # Every swap must release cash (user, 2026-10-04): sell first, then buy at most the pairs sold,
