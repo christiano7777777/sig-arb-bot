@@ -763,6 +763,14 @@ function stratPoints(k) {
   // the 10-minute grid since the Cup began (B, C, D at cost) until market-value points were recorded,
   // then those points (A: pairs pay 1, legs at cost; B, C, D: current SUSQ market value)
   // A: the replay only (its value needs no market prices, so the replay is exact once the history is loaded)
+  if (k === "A" && loading()) {          // the replay is reloading after a restart: draw A's recorded points meanwhile
+    let rec = hist.filter(p => p.s2 && p.s2.A != null).map(p => ({ t: p.t, v: p.s2.A }));
+    if (rec.length && sWin.A) {
+      const end = new Date(rec[rec.length - 1].t).getTime();
+      rec = rec.filter(p => new Date(p.t).getTime() >= end - sWin.A * 3600e3);
+    }
+    return { pts: rec, liveFrom: null, recorded: true };
+  }
   const live = k === "A" ? [] : hist.filter(p => p.s2 && p.s2[k] != null).map(p => ({ t: p.t, v: p.s2[k] }));
   const firstLive = live.length ? new Date(live[0].t).getTime() : Infinity;
   let pts = ((snap && snap.strategy_series) || []).filter(p => new Date(p.t).getTime() < firstLive)
@@ -791,7 +799,10 @@ function drawStrat(k) {
       (((snap && snap.strategy_now) || {}).U ? ` Unattributed trades (no matching tagged fill): ${fmt(snap.strategy_now.U)}.` : "")
     : k === "E" ? "E's own trades only (own ledger and cash): cash flow + what it holds at the current SUSQ market value (mid), since E went live."
     : `Its own trades only: cash flow + what it holds at the current SUSQ market value (mid), recorded from ${liveFrom ? new Date(liveFrom).toLocaleString() : "now on"}; before that at cost.`;
-  if (k === "A" && loading()) {
+  if (k === "A" && loading() && pts.length >= 2) {
+    document.getElementById("n" + k).textContent = "Recorded values (pairs pay 1, single legs at cost); the full replay is reloading after a bot restart, the latest points follow once it is done.";
+  }
+  if (k === "A" && loading() && pts.length < 2) {
     const from = pts.length ? new Date(pts[0].t).toLocaleString() : "now";
     document.getElementById("l" + k).innerHTML = `<span><i style="background:${SCOL[k]}"></i>${SNAME[k]}: <b>–</b></span>`;
     svg.innerHTML = `<text x="${W / 2}" y="${H / 2}" text-anchor="middle" style="fill:var(--muted);font-size:12px">Loading trade history after a bot restart (back to ${esc(from)} so far)…</text>`;

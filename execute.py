@@ -842,6 +842,14 @@ class Basket:
             print(f"  {self.name}: skip, holds YES shares (a NO buy would net against them)")
             return None
         race_room = float("inf") if config.PER_RACE_CAP is None else config.PER_RACE_CAP - race_cost
+        cap_pairs = getattr(config, "A_ROTATE_MAX_PAIRS", None)
+        if cap_pairs and getattr(config, "EXIT_QUEUE", None) and self.name not in config.EXIT_QUEUE:
+            room_pairs = cap_pairs - min(no)                 # rotating market: at most A_ROTATE_MAX_PAIRS pairs
+            if room_pairs < 1:
+                return None
+            max_pairs_cap = room_pairs
+        else:
+            max_pairs_cap = None
         trigger = config.ROTATE_TRIGGER_CASH if min_cash is None else min_cash
         cash = budget if budget is not None else self.r.cash_room()
         if cash < trigger and budget is None:
@@ -855,7 +863,10 @@ class Basket:
             self.cash_blocked = True          # reported once per poll, in Runner.poll
             return None
         max_cost = max(0.0, min(race_room, cash))
-        res = walk_baskets(ladders, 1.0, edge, max_baskets=self.r.max_baskets,
+        mb = self.r.max_baskets
+        if max_pairs_cap is not None:
+            mb = max_pairs_cap if mb is None else min(mb, max_pairs_cap)
+        res = walk_baskets(ladders, 1.0, edge, max_baskets=mb,
                            max_cost=None if max_cost == float("inf") else max_cost)
         q = res["quantity"]
         if q == 0:

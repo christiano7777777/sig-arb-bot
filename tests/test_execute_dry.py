@@ -91,6 +91,7 @@ def make_runner(fake, min_edge=0.005, exposure=None, capital=50_000, reserve=50_
     config.MAKER_FOCUS_BIDS, config.E_ALLOT_BASE, config.A_NONFOCUS_MAX_EDGE = False, None, None
     config.EXIT_QUEUE, config.HOLD_RACES, config.D_CLOSE = None, [], False
     config.EXIT_ASK_ALWAYS, config.EXIT_BID_PER_HOUR, config.EXIT_BID_CLIP, config.EXIT_BID_MIN_SUM = False, None, 500, 0.94
+    config.A_ROTATE_MAX_PAIRS = None
     config.D_PAUSE_UNTIL_A_SMALL = None
     config.C_LIMIT, config.C_SKEW, config.C_SKEW_MAX, config.C_QUOTE_EDGE, config.C_CLIP = 2_000, 0.10, 0.25, 0.02, 500
     config.C_EXTRA_RACES = 5
@@ -1716,6 +1717,20 @@ def test_exit_push_b_asks_always_out():
     config.EXIT_ASK_ALWAYS = True
     want = r.b.queue_exit_quotes(r.quotes(), act)
     assert sorted((k[1], o["qty"]) for k, (_, o) in want.items()) == [("sell", 250), ("sell", 250)]
+
+
+def test_rotating_market_capped_at_5000_pairs():
+    fake = FakeClient({"Rot race": EDGE_02, "Exit race": SELLER_0995}, balance=50_000 + 20_000)
+    fake.held = {fake.ex_of("Rot race", "D"): (-4_800, 0.49 * 4_800), fake.ex_of("Rot race", "R"): (-4_800, 0.49 * 4_800)}
+    r = make_runner(fake, race_cap=None)
+    config.EXIT_QUEUE, config.A_ROTATE_MAX_PAIRS = ["Exit race"], 5_000
+    r.poll()
+    buys = [b for _, b in r.sent if b["legs"][0]["action"] == "buy"]
+    assert buys and sum(b["legs"][0]["quantity"] for b in buys) <= 200           # 4,800 held -> at most 200 more
+    fake.held = {fake.ex_of("Rot race", "D"): (-5_000, 2_450.0), fake.ex_of("Rot race", "R"): (-5_000, 2_450.0)}
+    r.sent.clear(); r._pos = None
+    r.poll()
+    assert not [b for _, b in r.sent if b["legs"][0]["action"] == "buy"]       # at the cap: no more buys
 
 
 if __name__ == "__main__":
