@@ -118,8 +118,8 @@ D_PAUSE_UNTIL_A_SMALL = None  # user, 2026-10-07 13:30: off with the bucket (was
 # Exits are immediate (user, 2026-10-04): each poll runs ALL exits first, then only a few entries and
 # swaps, so the next exit check is never more than a few seconds away.
 MAX_ENTRIES_PER_POLL = 4
-MAX_ROTATIONS_PER_POLL = 2
-ROTATE_MAX_PER_MIN = 6       # with ~1 poll/s: at most this many swap attempts a minute (30 writes/min budget)
+MAX_ROTATIONS_PER_POLL = 3     # user, 2026-10-09 "higher frequency" (was 2)
+ROTATE_MAX_PER_MIN = 12  # user, 2026-10-09 "higher frequency"; B/C/D off, so the write budget is A's (was 6)       # with ~1 poll/s: at most this many swap attempts a minute (30 writes/min budget)
 
 # --- Strategy B: Kalshi-anchored trading on held races (user, 2026-10-04) ---
 # Fair value of each leg from Kalshi's mid (overround removed). Sell the leg that is rich on SUSQ,
