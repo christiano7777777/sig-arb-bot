@@ -179,7 +179,7 @@ E_FILL_PER_HOUR = 150        # user, 2026-10-08 18:00: refill 150/h toward E_CAP
 E_ALLOT_BASE = 10_000  # user, 2026-10-08 16:00: full 10k reserved now (was 3,000)         # user, 2026-10-08 18:00: E's reserve 3k now (was 10k: 6.6k idle while E had no signal)
 E_FILL_SINCE = "2026-10-07T18:01:00+00:00"   # allotment = min(E_CAPITAL, E_ALLOT_BASE + E_FILL_PER_HOUR x hours since this)
 E_INTERVAL_S = 10            # one E round per Kalshi batch refresh
-E_JUMP = 0.03                # Kalshi fair of a leg (NO price) up at least this ...
+E_JUMP = 0.02                # user, 2026-10-09: lower (was 0.03). Kalshi fair of a leg (NO price) up at least this ...
 E_JUMP_WINDOW_S = 60         # ... within this long
 E_BASELINE_S = 7_200         # usual gap fair - SUSQ mid = median over the last 2 h
 E_MIN_HISTORY_S = 1_800      # no entries in a race until 30 min of history (e.g. after a restart)
