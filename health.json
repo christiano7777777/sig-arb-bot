@@ -1,0 +1,1 @@
+{"started": "2026-10-10T19:06:38.336Z", "polls": 16498, "api_errors": 0, "rejected": 0, "B": {"rounds": 0, "errors": 0, "last_error": null}, "D": {"rounds": 0, "errors": 0, "last_error": null}, "E": {"rounds": 1851, "errors": 0, "last_error": null, "last_ok": "2026-10-11T00:43:11.706Z"}, "last_poll": "2026-10-11T00:43:18.728Z", "feed": true}
