@@ -172,7 +172,7 @@ D_LIVE_SINCE = "2026-10-04T13:30:00+00:00"   # D's fills counted from here (ledg
 
 # --- Strategy E: Kalshi-jump breakout (user, 2026-10-07; strategy_e.py, e_executor.py) ---
 # Needs the Kalshi batch cache (KALSHI_BATCH_S) and runs live only. Own ledger and own cash, independent of A.
-E_ENABLED = True  # user, 2026-10-08 16:00: reserve cash for Breakout (was False)            # user, 2026-10-08 05:30: E off (no positions; its reserve goes back to the pool)
+E_ENABLED = False  # user, 2026-10-16: Breakout deleted after E_CLOSE sold its last position (flat at 15:15 UTC); code kept. Was True (2026-10-08 16:00: reserve cash for Breakout)            # user, 2026-10-08 05:30: E off (no positions; its reserve goes back to the pool)
 E_LIVE_SINCE = "2026-10-07T15:29:00+00:00"   # E's allotment grows from here; E's fills counted from here
 E_CLOSE = True               # user, 2026-10-16: E flat: sell every share in E's ledger into the best NO bids, no new entries, no cash reserved
 E_CAPITAL = 4_400           # user, 2026-10-16: = E's open positions at cost (was 10,000), so E reserves ~no cash for new entries; frees ~5.6k for A
