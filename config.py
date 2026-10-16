@@ -94,7 +94,7 @@ A_TOP_N = None               # user, 2026-10-08 05:30: focus rotation replaced b
 # A sells it into the bids whenever the cash can buy any cheaper pair); never bought. HOLD_RACES: no buys, no sells.
 EXIT_QUEUE = None   # user, 2026-10-08 16:00: exits done (all at <= 5,000); was ["Delaware Senate", "MN-05 House race"]   # user, 2026-10-08: MN-05 after Delaware (Alaska done: rotating)
 HOLD_RACES = []              # (MN-05 was held; queued races are neither bought nor sold until their turn)
-A_PRIORITY_PAIRS = 5_000     # user, 2026-10-09: markets above this are bought last and sold first to fund swaps
+A_PRIORITY_PAIRS = None      # user, 2026-10-16: off (was 5,000: markets above it bought last, sold first); only the 10,000 cap applies
 A_ROTATE_MAX_PAIRS = 10_000  # user, 2026-10-08 16:00 "higher the cap" (was 5,000)   # user, 2026-10-08: rotating markets hold at most this many pairs each (cash buys and swaps)
 # Push the exit race (user, 2026-10-08 06:05): B's asks always out (no "cheaper pair elsewhere" condition), and A sells
 # EXIT_BID_CLIP pairs into the bids every 3600 x CLIP / PER_HOUR seconds, never at a NO-bid sum below EXIT_BID_MIN_SUM
@@ -174,7 +174,7 @@ D_LIVE_SINCE = "2026-10-04T13:30:00+00:00"   # D's fills counted from here (ledg
 # Needs the Kalshi batch cache (KALSHI_BATCH_S) and runs live only. Own ledger and own cash, independent of A.
 E_ENABLED = True  # user, 2026-10-08 16:00: reserve cash for Breakout (was False)            # user, 2026-10-08 05:30: E off (no positions; its reserve goes back to the pool)
 E_LIVE_SINCE = "2026-10-07T15:29:00+00:00"   # E's allotment grows from here; E's fills counted from here
-E_CAPITAL = 10_000           # user: 10k, no other risk limit
+E_CAPITAL = 4_400            # user, 2026-10-16: = E's open positions at cost (was 10,000), so E reserves ~no cash for new entries; frees ~5.6k for A
 E_FILL_PER_HOUR = 150        # user, 2026-10-08 18:00: refill 150/h toward E_CAPITAL (was 1e9 = full 10k, 500/h before)
 E_ALLOT_BASE = 10_000  # user, 2026-10-08 16:00: full 10k reserved now (was 3,000)         # user, 2026-10-08 18:00: E's reserve 3k now (was 10k: 6.6k idle while E had no signal)
 E_FILL_SINCE = "2026-10-07T18:01:00+00:00"   # allotment = min(E_CAPITAL, E_ALLOT_BASE + E_FILL_PER_HOUR x hours since this)
