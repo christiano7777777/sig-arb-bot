@@ -50,7 +50,7 @@
   .winbar button { font: inherit; font-size: 12px; padding: 4px 10px; border-radius: 999px; cursor: pointer;
                    border: 1px solid var(--line); background: transparent; color: var(--muted); }
   .winbar button[aria-pressed="true"] { background: var(--text); color: var(--bg); border-color: var(--text); }
-  #chart { width: 100%; height: 260px; display: block; touch-action: pan-y; }
+  #chart { width: 100%; height: 380px; display: block; touch-action: pan-y; }
   #chart text { fill: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
   .tip { position: absolute; top: 4px; pointer-events: none; background: var(--card); border: 1px solid var(--line);
          border-radius: 8px; padding: 6px 9px; font-size: 12px; box-shadow: 0 2px 8px rgba(0,0,0,.12);
@@ -92,7 +92,7 @@
     <button role="tab" data-tab="m" hidden><span class="badge bm">B</span> Pair maker</button>
     <button role="tab" data-tab="b" hidden><span class="badge bb">C</span> Kalshi market making</button>
     <button role="tab" data-tab="d" hidden><span class="badge bd">D</span> Senate stat arb</button>
-    <button role="tab" data-tab="e"><span class="badge be">E</span> Breakout</button>
+    <button role="tab" data-tab="e" hidden><span class="badge be">E</span> Breakout</button>
   </div>
 
   <section data-panel="overview">
@@ -119,7 +119,7 @@
         <div class="cards" id="sumB"></div></div>
       <div class="panel pd" style="display:none"><div class="ptitle"><span class="badge bd">D</span> Senate stat arb <span class="n" id="dsub">delta-hedged</span></div>
         <div class="cards" id="sumD"></div></div>
-      <div class="panel pe"><div class="ptitle"><span class="badge be">E</span> Breakout <span class="n">own 10k, directional</span></div>
+      <div class="panel pe" style="display:none"><div class="ptitle"><span class="badge be">E</span> Breakout <span class="n">own 10k, directional</span></div>
         <div class="cards" id="sumE"></div></div>
     </div>
     <p class="note" id="recon"></p>
@@ -344,9 +344,7 @@ function render(d) {
   const pnl = d.value_at_settlement - d.initial;
   const mtm = d.mark_to_market - d.initial;
   document.getElementById("cards").innerHTML =
-    card("Value at settlement", fmt(d.value_at_settlement), `${pnl >= 0 ? "+" : ""}${fmt(pnl)} vs ${fmt(d.initial, 0)} · Breakout positions at cost`, pnl >= 0 ? "pos" : "neg") +
-    (d.value_fair != null ? card("With Breakout at Kalshi fair", fmt(d.value_fair),
-                (v => `${v >= 0 ? "+" : ""}${fmt(v)} vs start`)(d.value_fair - d.initial)) : "") +
+    card("Value at settlement", fmt(d.value_at_settlement), `${pnl >= 0 ? "+" : ""}${fmt(pnl)} vs ${fmt(d.initial, 0)} · pairs pay 1 at settlement`, pnl >= 0 ? "pos" : "neg") +
     card("Cash", fmt(d.cash), (d.cash_split ? `new cash: ${d.focus ? "E's 10k first, then " : ""}${["A", "B", "C", "D"].filter(k => d.cash_split[k]).map(k => `${k} ${Math.round(d.cash_split[k] * 100)}%`).join(" · ")} · ` : "") + (d.extra_enabled
       ? `${fmt(Math.max(d.cash - d.reserve, 0))} for any edge · ${fmt(Math.max(d.cash - d.hard_reserve, 0))} for edge ≥ ${d.extra_min_edge}`
       : (d.a_cap != null || d.hard_reserve != null) ? `${fmt(Math.max(d.cash - d.hard_reserve, 0))} free above the ${fmt(d.hard_reserve, 0)} hard reserve`
@@ -654,14 +652,13 @@ function renderActivity() {
   }).join("");
 }
 
-// ---------- equity curve (inline SVG, one y-axis: both series are SUSQies) ----------
+// ---------- equity curve (inline SVG: two stacked panels, shared time axis, each with its own y-axis) ----------
 const HIST = SRC.replace("snapshot.json", "history.json");
 const ELIVE = SRC.replace("snapshot.json", "e.json");      // strategy E's live view, written by the bot every 10 s
 let elive = null;
 let hist = [], initial = 100000;
-const SERIES = [
-  { key: "settle", name: "Value at settlement (pairs pay 1; Breakout positions at cost)", color: "var(--s1)" },
-  { key: "fair", name: "Value with Breakout positions at Kalshi fair", color: "var(--s3)" },
+const SERIES = [      // one panel each: they sit ~2-3k apart, so on one y-scale one of them left the chart (user, 2026-10-16)
+  { key: "settle", name: "Value at settlement (pairs pay 1)", color: "var(--s1)" },
   { key: "mtm", name: "Mark-to-market (current prices)", color: "var(--s2)" },
 ];
 
@@ -687,7 +684,7 @@ function windowPoints() {
 
 function drawChart() {
   const svg = document.getElementById("chart");
-  const W = svg.clientWidth || 600, H = 260, L = 58, R = 92, T = 10, B = 26;
+  const W = svg.clientWidth || 600, H = 380, L = 58, R = 92, T = 10, B = 26, GAP = 22;
   svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
   document.querySelectorAll("#winbar button").forEach(btn =>
     btn.setAttribute("aria-pressed", String(+btn.dataset.w === winHours)));
@@ -698,46 +695,56 @@ function drawChart() {
     return;
   }
   const ts = pts.map(p => new Date(p.t).getTime());
-  const vals = pts.flatMap(p => [p.settle, p.fair]).filter(v => v != null);   // scaled to the settlement curve; mark-to-market is clipped
-  // y-axis centred on the window's first value, scaled to the window's own moves (user, 2026-10-09)
-  const mid = pts[0].settle, half = Math.max(...vals.map(v => Math.abs(v - mid))) * 1.1 || 5;
-  let lo = mid - half, hi = mid + half;
   const t0 = ts[0], t1 = ts[ts.length - 1];
   const x = t => L + (W - L - R) * (t - t0) / ((t1 - t0) || 1);
-  const y = v => T + (H - T - B) * (1 - (v - lo) / (hi - lo));
+  // each panel is centred on its own first value in the window and scaled to its own moves (user, 2026-10-09/16)
+  const PH = (H - T - B - GAP) / 2;
+  const panels = SERIES.map((s, i) => {
+    const top = T + i * (PH + GAP), vs = pts.map(p => p[s.key]).filter(v => v != null);
+    if (!vs.length) return { s, top, empty: true };
+    const mid = vs[0], half = Math.max(...vs.map(v => Math.abs(v - mid))) * 1.1 || 5;
+    const lo = mid - half, hi = mid + half;
+    return { s, top, lo, hi, y: v => top + PH * (1 - (v - lo) / (hi - lo)) };
+  });
 
-  let g = `<defs><clipPath id="plotclip"><rect x="${L}" y="${T}" width="${W - L - R}" height="${H - T - B}"/></clipPath></defs>`;
-  for (const v of niceTicks(lo, hi)) {
-    g += `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="var(--grid)" stroke-width="1"/>`
-       + `<text x="${L - 6}" y="${y(v) + 4}" text-anchor="end">${fmt(v, 0)}</text>`;
-  }
+  let g = `<defs>${panels.map((pn, i) => `<clipPath id="plotclip${i}"><rect x="${L}" y="${pn.top}" width="${W - L - R}" height="${PH}"/></clipPath>`).join("")}</defs>`;
+  const lastOf = key => { for (let i = pts.length - 1; i >= 0; i--) if (pts[i][key] != null) return [i, pts[i][key]]; return null; };
+  panels.forEach((pn, i) => {
+    g += `<text x="${L + 6}" y="${pn.top + 13}" style="fill:${pn.s.color};font-weight:600">${esc(pn.s.name)}</text>`;
+    if (pn.empty) {
+      g += `<text x="${L + (W - L - R) / 2}" y="${pn.top + PH / 2}" text-anchor="middle">not recorded in this window</text>`;
+      return;
+    }
+    const { s, lo, hi, y } = pn;
+    g += `<rect x="${L}" y="${pn.top}" width="${W - L - R}" height="${PH}" fill="none" stroke="var(--grid)" stroke-width="1"/>`;
+    for (const v of niceTicks(lo, hi, 3)) {
+      g += `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="var(--grid)" stroke-width="1"/>`
+         + `<text x="${L - 6}" y="${y(v) + 4}" text-anchor="end">${fmt(v, 0)}</text>`;
+    }
+    if (initial >= lo && initial <= hi)               // the Cup's starting value, only when it is inside this panel's range
+      g += `<line x1="${L}" x2="${W - R}" y1="${y(initial)}" y2="${y(initial)}" stroke="var(--muted)" stroke-width="1" stroke-dasharray="4 4"/>`
+         + `<text x="${W - R + 6}" y="${y(initial) + 4}">start ${fmt(initial, 0)}</text>`;
+    // a missing value (no mark-to-market before live recording began) breaks the line
+    // step line: the value holds until the next recorded change (no slopes across quiet periods)
+    let d = "", pen = false, prevY = null;
+    pts.forEach((p, k) => {
+      if (p[s.key] == null) { pen = false; return; }
+      const xi = x(ts[k]).toFixed(1), yi = y(p[s.key]).toFixed(1);
+      d += pen ? `L${xi},${prevY}L${xi},${yi}` : `M${xi},${yi}`;
+      pen = true; prevY = yi;
+    });
+    if (d) g += `<path d="${d}" fill="none" stroke="${s.color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" clip-path="url(#plotclip${i})"/>`;
+    const l = lastOf(s.key);
+    if (l && l[1] >= lo && l[1] <= hi)
+      g += `<circle cx="${x(ts[l[0]])}" cy="${y(l[1])}" r="4" fill="${s.color}" stroke="var(--card)" stroke-width="2"/>`
+         + `<text x="${W - R + 8}" y="${y(l[1]) + 4}" style="fill:var(--text)">${fmt(l[1], 0)}</text>`;
+  });
   const span = t1 - t0;
-  for (let k = 0; k <= 3; k++) {
+  for (let k = 0; k <= 3; k++) {                      // shared time axis, under the lower panel
     const t = t0 + span * k / 3, d = new Date(t);
     const lab = span > 36 * 3600e3 ? d.toLocaleDateString([], { month: "short", day: "numeric" })
                                    : d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
     g += `<text x="${x(t)}" y="${H - 6}" text-anchor="${k === 0 ? "start" : k === 3 ? "end" : "middle"}">${lab}</text>`;
-  }
-  if (initial >= lo && initial <= hi)                 // the Cup's starting value, only when it is inside the window's range
-    g += `<line x1="${L}" x2="${W - R}" y1="${y(initial)}" y2="${y(initial)}" stroke="var(--muted)" stroke-width="1" stroke-dasharray="4 4"/>`
-       + `<text x="${W - R + 6}" y="${y(initial) + 4}">start ${fmt(initial, 0)}</text>`;
-  const lastOf = key => { for (let i = pts.length - 1; i >= 0; i--) if (pts[i][key] != null) return [i, pts[i][key]]; return null; };
-  for (const s of SERIES) {
-    // a missing value (no mark-to-market before live recording began) breaks the line
-    // step line: the value holds until the next recorded change (no slopes across quiet periods)
-    let d = "", pen = false, prevY = null;
-    pts.forEach((p, i) => {
-      if (p[s.key] == null) { pen = false; return; }
-      const xi = x(ts[i]).toFixed(1), yi = y(p[s.key]).toFixed(1);
-      d += pen ? `L${xi},${prevY}L${xi},${yi}` : `M${xi},${yi}`;
-      pen = true; prevY = yi;
-    });
-    if (!d) continue;
-    g += `<path d="${d}" fill="none" stroke="${s.color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" clip-path="url(#plotclip)"/>`;
-    const [li, last] = lastOf(s.key);
-    if (last < lo || last > hi) continue;               // outside this window's range (e.g. mark-to-market): legend only
-    g += `<circle cx="${x(ts[li])}" cy="${y(last)}" r="4" fill="${s.color}" stroke="var(--card)" stroke-width="2"/>`
-       + `<text x="${W - R + 8}" y="${y(last) + 4}" style="fill:var(--text)">${fmt(last, 0)}</text>`;
   }
   g += `<line id="cross" y1="${T}" y2="${H - B}" stroke="var(--muted)" stroke-width="1" visibility="hidden"/>`;
   svg.innerHTML = g;
