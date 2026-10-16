@@ -1312,6 +1312,7 @@ def _e_runner(balance=20_000):
     import e_executor
     import kalshi
     fake, r = _b_runner(0, 0, balance=balance, p={"D": 0.90, "R": 0.10})   # kalshi.fair, as the cache would give
+    config.E_CLOSE = False                              # E's trading tests; the close tests switch it on
     config.E_CAPITAL, config.E_FILL_PER_HOUR, config.E_INTERVAL_S = 10_000, 500, 10
     config.E_JUMP, config.E_JUMP_WINDOW_S, config.E_BASELINE_S, config.E_MIN_HISTORY_S = 0.03, 60, 7_200, 1_800
     config.E_MARGIN, config.E_EXIT_SLACK, config.E_LIVE_SINCE = 0.01, 0.005, "2026-01-01T00:00:00+00:00"
@@ -1358,6 +1359,36 @@ def test_e_no_entry_when_susq_already_followed():
     fake.books[ex_r] = ([(0.12, 9000)], [(0.115, 9000)])                 # NO_R ask 0.88 > limit 0.87
     e._step(r.quotes())
     assert not [b for _, b in r.sent if "legs" not in b and b["idempotencyKey"].endswith("e-entry")]
+
+
+def test_e_close_sells_the_whole_ledger_at_the_best_bid_and_releases_its_cash():
+    fake, r, e, ex_d, ex_r = _e_runner(balance=20_000)
+    e.ledger[ex_r] = 700                                                 # E holds 700 NO_R
+    fake.books[ex_r] = ([(0.12, 9000)], [(0.115, 9000)])                 # YES bids / YES asks (quotes() takes the best of each)
+    config.E_CLOSE = True
+    try:
+        assert e.reserved() == 0.0 and abs(r.free_cash() - (20_000 - config.HARD_RESERVE)) < 1e-6
+        r.sent.clear()
+        e.step(r.quotes())
+        sells = [b for _, b in r.sent if "legs" not in b and b["idempotencyKey"].endswith("e-close")]
+        assert len(sells) == 1 and sells[0]["exchangeId"] == ex_r and sells[0]["action"] == "sell"
+        assert sells[0]["quantity"] == 700 and sells[0]["side"] == "no"
+        assert abs(sells[0]["price"] - (1 - r.quotes()[ex_r]["bestAsk"])) < 1e-9   # the best NO bid
+        assert ex_r not in e.ledger                                       # dry run counts it as filled
+        assert r.strategy_of("Delaware Senate:e-close-sell-R") == ("E", "close")
+    finally:
+        config.E_CLOSE = False
+
+
+def test_e_close_places_no_buys_and_does_nothing_when_flat():
+    fake, r, e, ex_d, ex_r = _e_runner()
+    config.E_CLOSE = True
+    try:
+        r.sent.clear()
+        e.step(r.quotes())                                               # Kalshi jumped, E has cash: still no entry
+        assert not [b for _, b in r.sent if "legs" not in b]
+    finally:
+        config.E_CLOSE = False
 
 
 def test_e_off_in_dry_runs_by_default():

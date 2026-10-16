@@ -174,7 +174,8 @@ D_LIVE_SINCE = "2026-10-04T13:30:00+00:00"   # D's fills counted from here (ledg
 # Needs the Kalshi batch cache (KALSHI_BATCH_S) and runs live only. Own ledger and own cash, independent of A.
 E_ENABLED = True  # user, 2026-10-08 16:00: reserve cash for Breakout (was False)            # user, 2026-10-08 05:30: E off (no positions; its reserve goes back to the pool)
 E_LIVE_SINCE = "2026-10-07T15:29:00+00:00"   # E's allotment grows from here; E's fills counted from here
-E_CAPITAL = 4_400            # user, 2026-10-16: = E's open positions at cost (was 10,000), so E reserves ~no cash for new entries; frees ~5.6k for A
+E_CLOSE = True               # user, 2026-10-16: E flat: sell every share in E's ledger into the best NO bids, no new entries, no cash reserved
+E_CAPITAL = 4_400           # user, 2026-10-16: = E's open positions at cost (was 10,000), so E reserves ~no cash for new entries; frees ~5.6k for A
 E_FILL_PER_HOUR = 150        # user, 2026-10-08 18:00: refill 150/h toward E_CAPITAL (was 1e9 = full 10k, 500/h before)
 E_ALLOT_BASE = 10_000  # user, 2026-10-08 16:00: full 10k reserved now (was 3,000)         # user, 2026-10-08 18:00: E's reserve 3k now (was 10k: 6.6k idle while E had no signal)
 E_FILL_SINCE = "2026-10-07T18:01:00+00:00"   # allotment = min(E_CAPITAL, E_ALLOT_BASE + E_FILL_PER_HOUR x hours since this)

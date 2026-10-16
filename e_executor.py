@@ -82,6 +82,8 @@ class EExecutor:
 
     def reserved(self):
         """Cash the other strategies must leave for E (Runner.free_cash)."""
+        if getattr(config, "E_CLOSE", False):
+            return 0.0                              # closing: sale proceeds go straight back to A's pool
         return max(0.0, min(self.cash(), self.r.cached_balance() - config.HARD_RESERVE))
 
     # ---------------- one round ----------------
@@ -92,7 +94,11 @@ class EExecutor:
         he = self.r.health.setdefault("E", {"rounds": 0, "errors": 0, "last_error": None})
         he["rounds"] += 1
         try:
-            self._step(q)
+            if getattr(config, "E_CLOSE", False):       # user, 2026-10-16: E flat
+                self.close_all(q)
+                self.write_state(time.time(), [])
+            else:
+                self._step(q)
             he["last_ok"] = now_plus(0)
         except ApiError as e:
             print(f"  E: API error, round skipped: {e}")
@@ -130,6 +136,21 @@ class EExecutor:
                 while h and h[0][0] < now - config.E_BASELINE_S - config.E_JUMP_WINDOW_S:
                     h.popleft()
         self.write_state(now, watch)
+
+    def close_all(self, q):
+        """E_CLOSE: sell every share in E's ledger at the best NO bid (one marketable order per leg per round;
+        what does not fill is tried again next round, at whatever the best bid is then)."""
+        for b in self.races:
+            for i in (0, 1):
+                ex, leg = b.ex[i], b.legs[i]["party"]
+                qty = self.ledger.get(ex, 0)
+                ask_y = q.get(ex, {}).get("bestAsk")                  # YES ask -> NO bid
+                if qty < 1 or ask_y is None:
+                    continue
+                print(f"  E {b.name}: close NO_{leg}: sell {int(qty)} @ {round(1 - ask_y, 6)}")
+                self.send(b, ex, leg, "sell", int(qty), round(1 - ask_y, 6), "close")
+                if ex not in self.ledger:
+                    self.pos.pop(ex, None)
 
     def write_state(self, now, watch):
         """state/e.json for the dashboard: cash, holdings, recent events, and the legs whose Kalshi price moved
