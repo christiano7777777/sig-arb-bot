@@ -83,6 +83,31 @@ def test_after_5xx_the_identical_request_is_resent():
         susq_client.time.sleep = orig_sleep
 
 
+class TruncatedResp(Resp):
+    def json(self):
+        raise ValueError("Unterminated string starting at: line 1 column 97991")
+
+
+def test_truncated_json_on_a_read_is_an_api_error_not_a_crash():
+    c, _, _ = client([TruncatedResp(200, {})])
+    try:
+        c.get("/tournaments/x/portfolio/positions")
+        assert False, "expected ApiError"
+    except susq_client.ApiError as e:
+        assert e.status == 599 and e.code == "BAD_JSON" and e.retry_after is None
+
+
+def test_truncated_json_on_an_order_is_retried_with_the_identical_body():
+    orig_sleep = susq_client.time.sleep
+    susq_client.time.sleep = lambda s: None
+    try:
+        c, sent, _ = client([TruncatedResp(200, {}), Resp(200, {"results": []})])
+        c.post("/orders/multi-leg", order())
+        assert len(sent) == 2 and sent[0]["body"] == sent[1]["body"]
+    finally:
+        susq_client.time.sleep = orig_sleep
+
+
 if __name__ == "__main__":
     real = susq_client.time.time
     names = [n for n in dir() if n.startswith("test_")]

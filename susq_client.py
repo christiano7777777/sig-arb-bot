@@ -90,7 +90,14 @@ class SusqClient:
             "body": resp.text[:20000] if (method != "GET" or not resp.ok) else resp.text[:300],
         })
         if resp.ok:
-            return resp.json()
+            try:
+                return resp.json()
+            except ValueError as exc:
+                # 2xx with a cut-off body (live 2026-10-19 16:02: positions JSON ended mid-string and
+                # killed the run): treated like a 5xx (reads skip the poll, order POSTs retry the same body)
+                e = ApiError(599, "BAD_JSON", repr(exc)[:200])
+                e.retry_after = None
+                raise e from None
         try:
             err = resp.json()["error"]
             code, msg = err.get("code"), err.get("message")

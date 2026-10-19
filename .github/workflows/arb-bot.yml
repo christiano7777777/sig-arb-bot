@@ -43,8 +43,10 @@ jobs:
           set +e
           bash tools/push_snapshot.sh &        # dashboard data every 2 min (3 API reads each)
           SNAP=$!
+          T0=$(date +%s)
           python -u execute.py --live --max-runtime 20700 2>&1 | tee bot.log
           echo "code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+          echo "secs=$(( $(date +%s) - T0 ))" >> "$GITHUB_OUTPUT"
           kill $SNAP 2>/dev/null
           exit 0
 
@@ -63,8 +65,10 @@ jobs:
           echo "::error::Bot halted (see bot.log / STOP reason). Workflow disabled."
           exit 1
 
+      # A crash (exit 1, 2 ...) after more than 5 min of running also restarts the chain; a crash
+      # right at start-up (bad key, STOP file) does not, so it cannot loop. Halt (3) never restarts.
       - name: Start the next run
-        if: steps.bot.outputs.code == '0'
+        if: steps.bot.outputs.code == '0' || (steps.bot.outputs.code != '3' && steps.bot.outputs.secs > 300)
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh workflow run arb-bot.yml -R "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME"
