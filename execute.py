@@ -410,27 +410,55 @@ class Runner:
             print(f"  out of budget (A room {self.cash_room():.2f}) for {len(blocked)} race(s)")
             over = self.over_priority(held)                          # swaps: under A_PRIORITY_PAIRS first, then edge
             blocked.sort(key=lambda b: (b.name in over, -(self.top_edge(q, b) or 0)))
-        # 3) a few swaps, highest edge first
+        # 3) a few swaps, highest edge first; then, only if none traded, balancing swaps (ROTATE_BALANCE)
         if config.ROTATE_ENABLED:
-            done = 0
-            for b in blocked:
-                if STOP_FILE.exists() or done >= config.MAX_ROTATIONS_PER_POLL:
-                    return
-                edge = self.top_edge(q, b)
-                if edge is not None and edge >= config.ROTATE_ENTRY_EDGE - 1e-9:
-                    # with ~1 poll/s: do not retry a swap that found nothing until its race's quotes or
-                    # our holdings change, or 30 s pass (saves the book reads)
-                    key = (b.name, tuple((q.get(e, {}).get("bestBid"), q.get(e, {}).get("bestAsk")) for e in b.ex),
-                           self._pos_t)
-                    if self._no_swap.get(key, 0) > time.time() - 30:
-                        continue
-                    self._swaps = [t for t in self._swaps if t > time.time() - 60]
-                    if len(self._swaps) >= config.ROTATE_MAX_PER_MIN:
-                        return                      # write budget: B, maker and fixes need room too
-                    self._swaps.append(time.time())
-                    if self.rotate(b, q, held):
-                        done += 1
-                        self._no_swap[key] = time.time()   # cleared by any change in the key
+            self._swapped = False
+            for balance in [False] + ([True] if getattr(config, "ROTATE_BALANCE", False) else []):
+                if balance and self._swapped:
+                    break                           # a gain swap traded this poll: no balancing (user, 2026-10-27)
+                tries = [(b, None) for b in blocked]
+                if balance:
+                    tries = self.balance_matches(q, held, blocked)
+                done = 0
+                for b, seller in tries:
+                    if STOP_FILE.exists():
+                        return
+                    if done >= config.MAX_ROTATIONS_PER_POLL:
+                        break
+                    edge = self.top_edge(q, b)
+                    if edge is not None and edge >= config.ROTATE_ENTRY_EDGE - 1e-9:
+                        # with ~1 poll/s: do not retry a swap that found nothing until its race's quotes or
+                        # our holdings change, or 30 s pass (saves the book reads)
+                        key = (balance, b.name, seller and seller.name,
+                               tuple((q.get(e, {}).get("bestBid"), q.get(e, {}).get("bestAsk")) for e in b.ex),
+                               self._pos_t)
+                        if self._no_swap.get(key, 0) > time.time() - 30:
+                            continue
+                        self._swaps = [t for t in self._swaps if t > time.time() - 60]
+                        if len(self._swaps) >= config.ROTATE_MAX_PER_MIN:
+                            return                      # write budget: B, maker and fixes need room too
+                        self._swaps.append(time.time())
+                        if self.rotate(b, q, held, balance=balance, seller=seller):
+                            done += 1
+                            self._no_swap[key] = time.time()   # cleared by any change in the key
+                        if balance and self._swapped:
+                            break                   # held pair counts are stale now: next balance next poll
+
+    def balance_matches(self, q, held, blocked):
+        """Balancing swaps as a matching queue (user, 2026-10-27, option B): biggest held market first, each with
+        the target holding the fewest pairs that it can fund at gain >= 0 (bulk quotes) and that stays smaller
+        than it after the swap. Returns [(target, seller)] in that order."""
+        pairs_of = lambda a: min(held.get(e, {}).get("no", 0.0) for e in a.ex)
+        out = []
+        for b in blocked:
+            edge = self.top_edge(q, b)
+            if edge is None or edge < config.ROTATE_ENTRY_EDGE - 1e-9:
+                continue
+            for _, a in self.sellers(q, held, b, 1.0 - edge):
+                if math.floor((pairs_of(a) - pairs_of(b)) / 2) >= 1:
+                    out.append((-pairs_of(a), pairs_of(b), b, a))
+        out.sort(key=lambda t: t[:2])
+        return [(b, a) for _, _, b, a in out]
 
     def over_priority(self, held):
         """Markets holding more than A_PRIORITY_PAIRS pairs (user, 2026-10-09): bought last, sold first in swaps."""
@@ -753,17 +781,27 @@ class Runner:
                     out.append((s, a))
         return out
 
-    def rotate(self, b, q, held):
+    def rotate(self, b, q, held, balance=False, seller=None):
         """Swap into race b (edge >= ROTATE_ENTRY_EDGE) out of held pairs whose current NO-bid sum
-        beats b's ask sum by >= ROTATE_MIN_GAIN. Order (user, 2026-10-04):
+        beats b's ask sum by >= ROTATE_MIN_GAIN.
+        balance (user, 2026-10-27): a gain of >= 0 is enough, but only out of a market holding more pairs
+        than b (seller, picked by balance_matches), and only floor((its pairs - b's pairs) / 2) pairs, so the
+        bigger holding shrinks, the two end up as even as possible (10 and 6 -> 8 and 8) and never swap back.
+        Order (user, 2026-10-04):
           - enough cash above HARD_RESERVE for the whole swap -> buy first, then sell only what was
             bought (a failed buy changes nothing; a short sale leaves extra pairs bought at an edge)
           - otherwise -> sell first, then buy with what the sale freed, at a price that keeps the gain
         Returns True if it did any book reads."""
         # pre-check from the bulk quotes: the cheapest new pair is 1 - top edge, so no held race
         # bidding below that + ROTATE_MIN_GAIN can ever fund it. Then no book is read at all.
+        gain = 0.0 if balance else config.ROTATE_MIN_GAIN
+        pairs_of = lambda a: min(held.get(e, {}).get("no", 0.0) for e in a.ex)
+        pairs_b = pairs_of(b)
         c_top = 1.0 - self.top_edge(q, b)
-        possible = self.sellers(q, held, b, c_top + config.ROTATE_MIN_GAIN)
+        possible = self.sellers(q, held, b, c_top + gain)
+        if balance:                          # only the matched seller, and only if it stays at least as big as b
+            possible = [(s, a) for s, a in possible
+                        if (seller is None or a is seller) and math.floor((pairs_of(a) - pairs_b) / 2) >= 1]
         if not possible:
             return False
         # size the new pair only down to the levels the best seller can pay for:
@@ -774,21 +812,28 @@ class Runner:
         tries = ([max(pref)] if pref else []) + ([best_all] if not pref or best_all > max(pref) + 1e-9 else [])
         books_b = b.books()
         for best_s in tries:
-            edge_needed = max(config.ROTATE_ENTRY_EDGE, 1.0 - (best_s - config.ROTATE_MIN_GAIN))
+            edge_needed = max(config.ROTATE_ENTRY_EDGE, 1.0 - (best_s - gain))
             p = b.plan(books_b, min_edge=edge_needed, budget=float("inf"))
             if p is None:
                 continue
             qn, lim_n, _, held_b = p
             # worst case paid per new pair = the limit sum (slack included), so held pairs must sell at
             # >= that + ROTATE_MIN_GAIN for the swap to keep its gain whatever the buy fills at
-            sell_floor = sum(lim_n) + config.ROTATE_MIN_GAIN
+            sell_floor = sum(lim_n) + gain
             # read the sellers' books first and plan the sales, so the swap is no bigger than they absorb
             sales, left = [], qn             # the exit race, then markets above A_PRIORITY_PAIRS (user, 2026-10-09),
-            for _, a in sorted(self.sellers(q, held, b, sell_floor),     # then cheapest to give up first; all of them
-                               key=lambda t: (t[1].name != self.exiting, t[1].name not in over, -t[0])):   # >= floor
+            cands = sorted(self.sellers(q, held, b, sell_floor),     # then cheapest to give up first; all of them
+                           key=lambda t: (t[1].name != self.exiting, t[1].name not in over, -t[0]))   # >= floor
+            if balance:                      # the matched seller (else the largest), down to half its gap to b
+                cands = [t for t in cands if seller is None or t[1] is seller]
+                cands = [max(cands, key=lambda t: pairs_of(t[1]))] if cands else []
+            for _, a in cands:
                 if left < 1:
                     break
-                ex = a.plan_exit(a.books(), min_sum=sell_floor, max_pairs=left, allow_below_cost=True)
+                cap = min(left, math.floor((pairs_of(a) - pairs_b) / 2)) if balance else left
+                if cap < 1:
+                    break
+                ex = a.plan_exit(a.books(), min_sum=sell_floor, max_pairs=cap, allow_below_cost=True)
                 if ex is not None:
                     sales.append((a, ex))
                     left -= ex[0]
@@ -803,7 +848,7 @@ class Runner:
         # at <= the sale price - ROTATE_MIN_GAIN, paid only from this sale's proceeds. Cash released
         # >= ROTATE_MIN_GAIN per pair swapped, and the whole sale if the buy does not happen.
         # (Buy-first could leave extra pairs paid from cash when a sale fell short: removed.)
-        print(f"  ROTATE {b.name}: sell {q_swap} pairs at >= {sell_floor:.3f} from {names}, then buy at <= {sum(lim_n):.3f}")
+        print(f"  ROTATE{' (balance)' if balance else ''} {b.name}: sell {q_swap} pairs at >= {sell_floor:.3f} from {names}, then buy at <= {sum(lim_n):.3f}")
         sold, proceeds = 0, 0.0
         for a, (qs, lim_s, res_s, held_a) in sales:
             if STOP_FILE.exists():
@@ -815,9 +860,11 @@ class Runner:
             proceeds += got * sum(lim_s)                # lower bound: every share fills at or above its limit
         if sold < 1:
             return True
+        self._swapped = True
         self._cash = None
         p = b.plan(b.books(), min_edge=max(config.ROTATE_ENTRY_EDGE, 1.0 - sum(lim_n)),
-                   budget=proceeds - 1e-6, min_cash=1)      # never more than this sale brought in
+                   budget=proceeds + (1e-9 if balance else -1e-6),   # never more than this sale brought in
+                   min_cash=0)       # (balance: gain 0, cost = proceeds exactly); min_cash 0: a 1-pair buy (< 1) still goes
         bought, cost = 0, 0.0
         if p is None:
             print(f"  ROTATE {b.name}: sold {sold:g} pairs; the new pair is no longer <= {sum(lim_n):.3f}")

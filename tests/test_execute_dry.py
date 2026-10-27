@@ -101,6 +101,7 @@ def make_runner(fake, min_edge=0.005, exposure=None, capital=50_000, reserve=50_
     config.MAKER_ENABLED = maker
     config.MAKER_RACES, config.MAKER_MIN_PAIRS, config.MAKER_CLIP = 6, 500, 500
     config.MAKER_LIFE_S, config.MAKER_MAX_ORDERS, config.ROTATE_MIN_GAIN = 300, 8, 0.001
+    config.ROTATE_BALANCE = False                   # balancing swaps have their own tests
     execute.STATE_DIR = Path(__file__).parent / "_state_test"
     execute.STOP_FILE = execute.STATE_DIR / "STOP"
     execute.STOP_FILE.unlink(missing_ok=True)          # a halt in an earlier test must not leak
@@ -1889,6 +1890,121 @@ def test_swaps_never_sell_an_over_5000_market_below_the_gain_floor():
     config.A_ROTATE_MAX_PAIRS, config.A_PRIORITY_PAIRS = 10_000, 5_000
     r.poll()
     assert not [b for _, b in r.sent if b["legs"][0]["exchangeId"] == fake.ex_of("Big", "D")]
+
+
+# ---- balancing swaps (user, 2026-10-27) ---------------------------------------
+SELLER_098 = {"D": ([(0.4, 5)], [(0.5, DEEP)]), "R": ([(0.4, 5)], [(0.52, DEEP)])}   # NO bids 0.5 + 0.48 = 0.98
+
+
+def _balance_setup(seller_pairs, targets, exposure=500):
+    """Held race bids 0.98; each target asks 0.98 (gain 0) and holds the given pairs. Out of cash."""
+    fake = FakeClient({"Held race": SELLER_098, **{n: EDGE_02 for n in targets}}, balance=50_000.5)
+    fake.held = {fake.ex_of("Held race", x): (-seller_pairs, 0.49 * seller_pairs) for x in "DR"}
+    for n, k in targets.items():
+        if k:
+            fake.held.update({fake.ex_of(n, x): (-k, 0.49 * k) for x in "DR"})
+    r = make_runner(fake, exposure=exposure)
+    config.ROTATE_BALANCE = True
+    return fake, r
+
+
+def _trades(fake, r):
+    """[(race, action, pairs)] in order sent."""
+    race_of = {fake.ex_of(n, "D"): n for n in {m["title"].split(" win the ")[1][:-1] for m in fake.markets}}
+    return [(race_of[b["legs"][0]["exchangeId"]], b["legs"][0]["action"], b["legs"][0]["quantity"]) for _, b in r.sent]
+
+
+def test_balance_swap_10_and_6_ends_8_and_8():
+    fake, r = _balance_setup(10, {"New race": 6})
+    r.poll()
+    assert _trades(fake, r) == [("Held race", "sell", 2), ("New race", "buy", 2)]
+    assert sum(l["price"] for l in r.sent[1][1]["legs"]) <= sum(l["price"] for l in r.sent[0][1]["legs"]) + 1e-9
+
+
+def test_balance_swap_10_and_7_moves_1():
+    fake, r = _balance_setup(10, {"New race": 7})
+    r.poll()
+    assert _trades(fake, r) == [("Held race", "sell", 1), ("New race", "buy", 1)]
+
+
+def test_balance_swap_into_an_empty_market():
+    fake, r = _balance_setup(5000, {"New race": 0}, exposure=10_000)
+    r.poll()
+    assert _trades(fake, r) == [("Held race", "sell", 2500), ("New race", "buy", 2500)]
+    fake, r = _balance_setup(5000, {"New race": 0})      # live 500 exposure: 1,000 a swap, the rest in later polls
+    r.poll()
+    assert _trades(fake, r) == [("Held race", "sell", 1000), ("New race", "buy", 1000)]
+
+
+def test_no_balance_swap_when_already_even():
+    for k in (8, 9):                                   # equal, or 1 apart (floor(1/2) = 0)
+        fake, r = _balance_setup(k, {"New race": 8})
+        r.poll()
+        assert r.sent == []
+
+
+def test_no_balance_swap_into_the_bigger_market():
+    fake, r = _balance_setup(6, {"New race": 10})      # would grow the larger holding
+    r.poll()
+    assert r.sent == []
+
+
+def test_balance_swap_needs_gain_at_least_zero():
+    fake, r = _balance_setup(10, {"New race": 6})
+    fake.books[fake.ex_of("New race", "R")] = ([(0.515, DEEP)], [(0.99, 5)])   # asks 0.985 > bids 0.98: a loss
+    r.poll()
+    assert r.sent == []
+
+
+def test_balance_swap_picks_the_target_with_fewest_pairs():
+    fake, r = _balance_setup(20, {"Mid race": 6, "Low race": 2})
+    r.poll()
+    assert _trades(fake, r) == [("Held race", "sell", 9), ("Low race", "buy", 9)]     # one per poll
+
+
+def test_balance_swap_sells_the_largest_market():
+    fake = FakeClient({"Big": SELLER_098, "Small": SELLER_098, "New race": EDGE_02}, balance=50_000.5)
+    fake.held = {fake.ex_of("Big", x): (-30, 14.7) for x in "DR"}
+    fake.held.update({fake.ex_of("Small", x): (-12, 5.88) for x in "DR"})
+    r = make_runner(fake, exposure=500)
+    config.ROTATE_BALANCE = True
+    r.poll()
+    assert _trades(fake, r) == [("Big", "sell", 15), ("New race", "buy", 15)]
+
+
+def test_balance_queue_biggest_seller_first_even_over_the_smallest_target():
+    # X 20 pairs can fund only T2 (4 pairs); Y 12 pairs can fund T1 (2 pairs). Biggest seller first: X -> T2, 8 pairs.
+    seller_0975 = {"D": ([(0.4, 5)], [(0.5, DEEP)]), "R": ([(0.4, 5)], [(0.525, DEEP)])}   # NO bids 0.975
+    edge_025 = {"D": ([(0.5, DEEP)], [(0.99, 5)]), "R": ([(0.525, DEEP)], [(0.99, 5)])}    # NO asks 0.975
+    fake = FakeClient({"X": seller_0975, "Y": SELLER_098, "T1": EDGE_02, "T2": edge_025}, balance=50_000.5)
+    for n, k in {"X": 20, "Y": 12, "T1": 2, "T2": 4}.items():
+        fake.held.update({fake.ex_of(n, x): (-k, 0.48 * k) for x in "DR"})
+    r = make_runner(fake, exposure=500)
+    config.ROTATE_BALANCE = True
+    config.ROTATE_MIN_GAIN = 0.01          # Y -> T2 (gain 0.005) is then no gain swap: only the queue decides
+    r.poll()
+    assert _trades(fake, r) == [("X", "sell", 8), ("T2", "buy", 8)]     # old order (smallest target): Y -> T1
+
+
+def test_gain_swaps_unchanged_and_no_balancing_after_one():
+    # gain 0.005 swap (bids 0.985 vs asks 0.98) is a normal swap: full size, no balance limit
+    seller = {"D": ([(0.4, 5)], [(0.5, DEEP)]), "R": ([(0.4, 5)], [(0.515, DEEP)])}
+    fake = FakeClient({"Held race": seller, "New race": EDGE_02}, balance=50_000.5)
+    fake.held = {fake.ex_of("Held race", x): (-5000, 2450.0) for x in "DR"}
+    r = make_runner(fake, exposure=10_000)
+    config.ROTATE_BALANCE = True
+    r.poll()
+    assert _trades(fake, r) == [("Held race", "sell", 5000), ("New race", "buy", 5000)]   # not capped at 2,500
+
+
+def test_one_pair_swap_buys_its_pair():
+    # open bug 2026-10-09 (Maine Senate): a 1-pair swap sold and never bought (buy cost 0.99 < min_cash 1)
+    seller = {"D": ([(0.4, 5)], [(0.5, 1)]), "R": ([(0.4, 5)], [(0.505, 1)])}        # 1 pair bid 0.995
+    fake = FakeClient({"Held race": seller, "New race": EDGE_01}, balance=50_000.5)
+    fake.held = {fake.ex_of("Held race", x): (-5000, 2450.0) for x in "DR"}
+    r = make_runner(fake, exposure=500)
+    r.poll()
+    assert _trades(fake, r) == [("Held race", "sell", 1), ("New race", "buy", 1)]
 
 
 if __name__ == "__main__":
