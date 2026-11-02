@@ -71,7 +71,15 @@ jobs:
         if: steps.bot.outputs.code == '0' || (steps.bot.outputs.code != '3' && steps.bot.outputs.secs > 300)
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh workflow run arb-bot.yml -R "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME"
+        # A GitHub 500 here broke the chain on 2026-11-02, and the schedule did not restart it for hours.
+        # If a failed call did create a run, the extra one just waits in the concurrency group.
+        run: |
+          for wait in 15 30 60 120 0; do
+            gh workflow run arb-bot.yml -R "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME" && exit 0
+            echo "dispatch failed; next try in ${wait}s"
+            sleep "$wait"
+          done
+          exit 1
 
       - name: Upload logs (no API key inside; kept 7 days)
         if: always()
