@@ -1,0 +1,40 @@
+# Keeps the arb-bot run chain alive until END_AT, then disables itself (see tools/watchdog.sh).
+# It stays alive in a loop and hands over to its own next run; the schedule only restarts it if that fails.
+#
+# Change the end: edit END_AT below; a new value applies from the next watchdog run.
+# Stop now:       gh workflow disable watchdog.yml   and   gh run cancel <id>
+# Stopping the bot still works as before: a disabled arb-bot.yml is never restarted.
+name: watchdog
+
+on:
+  workflow_dispatch:
+    inputs:
+      alert_test:
+        description: Also open a test alert issue
+        type: boolean
+        default: false
+  schedule:
+    - cron: "47 * * * *"
+
+concurrency:
+  group: watchdog
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: write
+  issues: write
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 358
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Watch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          END_AT: "2026-11-05T12:00:00Z"
+          ALERT_TEST: ${{ inputs.alert_test }}
+        run: bash tools/watchdog.sh
