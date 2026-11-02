@@ -76,7 +76,7 @@ ROTATE_TRIGGER_CASH = 50     # "out of budget" = less than this above the reserv
 # Balancing swaps (user, 2026-10-27): when no gain swap traded in a poll, a swap at gain >= 0 (no loss) is allowed
 # out of a market into one holding fewer pairs, at most floor((A - B) / 2) pairs (10 and 6 -> 8 and 8). Matching
 # queue: biggest seller first, each with the fewest-pairs target it can fund at >= 0. Pair counts, no minimum size.
-ROTATE_BALANCE = True
+ROTATE_BALANCE = False       # user, 2026-11-03: off for the last days of the Cup (was True)
 
 # Small-edge bucket (user, 2026-10-07): keep >= A_SMALL_FRAC of A's pairs (at cost) in races whose average
 # pair cost is >= 1 - A_SMALL_EDGE (bought at an edge <= 0.01). They sell near 1, so swaps (cheapest to
@@ -99,7 +99,7 @@ A_TOP_N = None               # user, 2026-10-08 05:30: focus rotation replaced b
 EXIT_QUEUE = None   # user, 2026-10-08 16:00: exits done (all at <= 5,000); was ["Delaware Senate", "MN-05 House race"]   # user, 2026-10-08: MN-05 after Delaware (Alaska done: rotating)
 HOLD_RACES = []              # (MN-05 was held; queued races are neither bought nor sold until their turn)
 A_PRIORITY_PAIRS = None      # user, 2026-10-16: off (was 5,000: markets above it bought last, sold first); only the A_ROTATE_MAX_PAIRS cap applies
-A_ROTATE_MAX_PAIRS = 15_000  # user, 2026-10-27 "raise the cap to 15000" (was 10,000; 5,000 before 2026-10-08 16:00)   # user, 2026-10-08: rotating markets hold at most this many pairs each (cash buys and swaps)
+A_ROTATE_MAX_PAIRS = 20_000  # user, 2026-11-03 "raise the cap to 20000" (was 15,000); 2026-10-27 "raise the cap to 15000" (was 10,000; 5,000 before 2026-10-08 16:00)   # user, 2026-10-08: rotating markets hold at most this many pairs each (cash buys and swaps)
 # Push the exit race (user, 2026-10-08 06:05): B's asks always out (no "cheaper pair elsewhere" condition), and A sells
 # EXIT_BID_CLIP pairs into the bids every 3600 x CLIP / PER_HOUR seconds, never at a NO-bid sum below EXIT_BID_MIN_SUM
 EXIT_ASK_ALWAYS = False      # user, 2026-10-08 16:00: exits done
