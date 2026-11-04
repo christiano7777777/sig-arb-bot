@@ -71,7 +71,7 @@ EXIT_MIN_SUM = 1.000
 # sold, at <= the sale price - ROTATE_MIN_GAIN, paid only from that sale's proceeds.
 ROTATE_ENABLED = True
 ROTATE_ENTRY_EDGE = MIN_EDGE  # user, 2026-10-04: swap whenever the swap itself earns > 0
-ROTATE_MIN_GAIN = 0.001   # user, 2026-10-04 (on the 0.005 tick this equals any gain > 0)
+ROTATE_MIN_GAIN = 0.005   # user, 2026-11-04 "set the bar higher, to 0.005" (was 0.001: 2026-10-04, on the 0.005 tick this equals any gain > 0)
 ROTATE_TRIGGER_CASH = 50     # "out of budget" = less than this above the reserve
 # Balancing swaps (user, 2026-10-27): when no gain swap traded in a poll, a swap at gain >= 0 (no loss) is allowed
 # out of a market into one holding fewer pairs, at most floor((A - B) / 2) pairs (10 and 6 -> 8 and 8). Matching
