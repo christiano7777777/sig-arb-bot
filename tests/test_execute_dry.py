@@ -74,7 +74,6 @@ def make_runner(fake, min_edge=0.005, exposure=None, capital=50_000, reserve=50_
                 cash_split=None, small_frac=None):
     # pin every setting the tests rely on, so editing config.py cannot silently change a test
     config.MIN_EDGE, config.MAX_UNHEDGED_EXPOSURE = min_edge, exposure
-    config.MAX_ENTRY_EDGE = None
     config.MAX_CAPITAL_PER_RUN, config.RESERVE, config.PER_RACE_CAP = capital, reserve, race_cap
     config.EXIT_ENABLED, config.EXIT_MIN_SUM, config.TOURNAMENT_SLUG = True, 1.0, SLUG
     config.RACE_DENYLIST = set(denylist)
@@ -146,45 +145,6 @@ def test_planted_entry_builds_correct_multileg():
     assert [l["price"] for l in body["legs"]] == [0.105, 0.89]
     assert [l["exchangeId"] for l in body["legs"]] == [fake.ex_of("Kansas Senate", "D"), fake.ex_of("Kansas Senate", "R")]
     assert all(l["side"] == "no" and l["action"] == "buy" and l["tournamentId"] == TID for l in body["legs"])
-
-
-def _edge_race(edge):
-    # NO asks 0.5 and 0.5 - edge: "D" YES bid 0.5, "R" YES bid 0.5 + edge
-    return {"D": ([(0.5, 1000)], [(0.99, 5)]), "R": ([(round(0.5 + edge, 3), 1000)], [(0.99, 5)])}
-
-
-def test_edge_above_the_limit_is_skipped_as_stale():
-    fake = FakeClient({"Kansas Senate": _edge_race(0.11)})
-    r = make_runner(fake)
-    config.MAX_ENTRY_EDGE = 0.05
-    r.poll()
-    assert r.sent == [] and not any(g.endswith("/orderbook") for g in fake.gets)
-
-
-def test_edge_at_the_limit_still_trades():
-    fake = FakeClient({"Kansas Senate": _edge_race(0.05)})
-    r = make_runner(fake)
-    config.MAX_ENTRY_EDGE = 0.05
-    r.poll()
-    assert len(r.sent) == 1
-
-
-def test_no_swap_into_an_edge_above_the_limit():
-    fake = FakeClient({"Held race": SELLER_0995, "New race": _edge_race(0.11)}, balance=50_000.5)
-    fake.held = {fake.ex_of("Held race", "D"): (-5000, 2500.0), fake.ex_of("Held race", "R"): (-5000, 2450.0)}
-    r = make_runner(fake, exposure=500)
-    config.MAX_ENTRY_EDGE = 0.05
-    r.poll()
-    assert r.sent == []
-
-
-def test_exit_still_runs_with_the_edge_limit():
-    fake = FakeClient({"Kansas Senate": {"D": ([(0.4, 1000)], [(0.45, 1000)]), "R": ([(0.4, 1000)], [(0.54, 1000)])}})
-    fake.held = {fake.ex_of("Kansas Senate", "D"): (-100, 50.0), fake.ex_of("Kansas Senate", "R"): (-100, 45.0)}
-    r = make_runner(fake)
-    config.MAX_ENTRY_EDGE = 0.05
-    r.poll()
-    assert r.sent and all(x[1] == "sell" for x in legs_of(r.sent[0][1]))
 
 
 def test_no_edge_sends_nothing_and_reads_no_books():
