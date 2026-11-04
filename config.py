@@ -57,6 +57,8 @@ MAX_UNHEDGED_EXPOSURE = 500  # worst-case SUSQies on an unpaired leg per attempt
 # buying the missing leg or selling the extra one (a small realised loss is accepted).
 REJECT_PAUSE_S = 60         # a race whose pair order was rejected (4xx: nothing traded) is skipped this long
 FIX_MAX_TRIES = 3            # then halt (only if the book cannot absorb the fix)
+AFTER_ORDER_TRIES = 6        # reads and cancels after an order: tries before a halt (user, 2026-11-04)
+AFTER_ORDER_WAIT_S = 5       # seconds between those tries; a 429 waits for its Retry-After, else 60 s
 
 # Exit: sell held NO+NO pairs when the NO bids sum to >= EXIT_MIN_SUM, to free capital
 # (user chose 1.000 on 2026-10-04: capital is wanted for other markets)

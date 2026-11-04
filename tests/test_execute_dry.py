@@ -915,6 +915,82 @@ def test_fix_that_succeeds_on_the_last_try_does_not_halt():
     assert not execute.STOP_FILE.exists()
 
 
+def _after_order_runner(tries=3):
+    fake = FakeClient({"Kansas Senate": {"D": ([(0.875, 9000)], [(0.88, 9000)]), "R": ([(0.11, 9000)], [(0.115, 9000)])}})
+    r = make_runner(fake); r.live = True
+    r.cancel_all = lambda exs: None
+    config.AFTER_ORDER_TRIES, config.AFTER_ORDER_WAIT_S = tries, 0
+    r.order = lambda path, body, label: {"results": [
+        {"data": {"exchangeId": l["exchangeId"], "quantityTraded": 10 if i == 0 else 0, "totalCost": 1, "open": i == 1}}
+        for i, l in enumerate(body["legs"])]}
+    return r, basket(r, "Kansas Senate")
+
+
+def _rate_limited():
+    e = execute.ApiError(429, "RATE_LIMITED", "Rate limit exceeded.")
+    e.retry_after = "0"
+    return e
+
+
+def _answers(items):
+    def read():
+        x = items.pop(0)
+        if isinstance(x, Exception):
+            raise x
+        return x
+    return read
+
+
+def test_read_error_after_a_one_sided_fill_still_evens_the_legs():
+    # live 2026-11-04 02:18: 429 on this read, the fix never ran, Alaska Senate stayed 602 shares unequal
+    r, b = _after_order_runner()
+    answers = [_rate_limited(), [90, 100], [90, 90]]
+    b.no_shares = _answers(answers)
+    fixed = []
+    b.fix_imbalance = lambda held, action, limits, target, base: fixed.append(held)
+    b.send_pair("sell", 10, [0.5, 0.49], [100, 100])
+    assert fixed == [[90, 100]] and not answers
+
+
+def test_cancel_error_after_an_order_is_retried():
+    r, b = _after_order_runner()
+    calls = []
+    def cancel(exs):
+        calls.append(exs)
+        if len(calls) == 1:
+            raise _rate_limited()
+    r.cancel_all = cancel
+    b.no_shares = lambda: [90, 90]
+    assert b.send_pair("sell", 10, [0.5, 0.49], [100, 100]) == 10 and len(calls) == 2
+
+
+def test_no_answer_after_an_order_halts_after_the_tries():
+    r, b = _after_order_runner(tries=3)
+    calls = []
+    def shares():
+        calls.append(1)
+        raise execute.ApiError(503, "SERVICE_UNAVAILABLE", "x")
+    b.no_shares = shares
+    try:
+        b.send_pair("sell", 10, [0.5, 0.49], [100, 100]); assert False, "expected Halt"
+    except execute.Halt:
+        pass
+    assert len(calls) == 3
+
+
+def test_read_error_inside_the_fix_does_not_halt():
+    r, b = _after_order_runner()
+    b.leg_order = lambda k, action, qty, price, tag: {"open": True}
+    config.FIX_MAX_TRIES = 3
+    good_books = b.books()
+    book_answers = [_rate_limited(), good_books]
+    b.books = _answers(book_answers)
+    answers = [_rate_limited(), [100, 100]]
+    b.no_shares = _answers(answers)
+    b.fix_imbalance([100, 90], "buy", [0.125, 0.885], 1.01)    # must return without Halt
+    assert not book_answers and not answers and not execute.STOP_FILE.exists()
+
+
 def test_own_order_drops_the_pushed_book():
     fake = FakeClient({"Kansas Senate": NO_EDGE})
     r = make_runner(fake)

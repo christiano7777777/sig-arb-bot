@@ -1071,8 +1071,8 @@ class Basket:
                   f"traded {d['quantityTraded']} cost {d['totalCost']} open={d['open']} "
                   f"reason={d.get('terminalReasonCode')}")
         if any_open:
-            self.r.cancel_all(self.ex)
-        after = self.no_shares()
+            self.after_order(lambda: self.r.cancel_all(self.ex))
+        after = self.after_order(self.no_shares)
         moved = [abs(a - b) for a, b in zip(after, before)]
         print(f"    {action} per leg (from positions): {moved}  now holding {after}")
         if abs((after[0] - after[1]) - base) > 1e-9:
@@ -1081,8 +1081,21 @@ class Basket:
                 self.fix_imbalance(after, action, limits, target, base)
             except ApiError as err:
                 raise Halt(f"{self.name}: error while evening out legs: {err}. Check positions by hand.")
-            after = self.no_shares()
+            after = self.after_order(self.no_shares)
         return abs(min(after) - min(before))       # pairs actually bought / sold
+
+    def after_order(self, call):
+        """A call that must succeed once an order may have traded: skipping it would skip the leg check
+        (live 2026-11-04 02:18: a 429 here left Alaska Senate 602 shares unequal). Retries, then halts."""
+        for attempt in range(1, config.AFTER_ORDER_TRIES + 1):
+            try:
+                return call()
+            except ApiError as err:
+                if attempt == config.AFTER_ORDER_TRIES:
+                    raise Halt(f"{self.name}: no answer after an order: {err}. Check positions by hand.")
+                wait = float(getattr(err, "retry_after", None) or 60) if err.status == 429 else config.AFTER_ORDER_WAIT_S
+                print(f"    {self.name}: API error after an order (try {attempt}): {err}; again in {wait:g} s")
+                time.sleep(wait)
 
     def leg_order(self, k, action, qty, price, tag):
         body = {"idempotencyKey": self.r.next_key(tag), "exchangeId": self.ex[k], "side": "no",
@@ -1099,7 +1112,7 @@ class Basket:
         original order intended. Halts only if the book cannot absorb the fix after FIX_MAX_TRIES.
         base: the imbalance (leg 0 - leg 1) the race had before the order; restored, not zeroed."""
         if self.r.live:                                 # our own resting quotes would block the fix (SelfTradePrevented)
-            self.r.cancel_all(self.ex)
+            self.after_order(lambda: self.r.cancel_all(self.ex))
             self.r.b_resting -= set(self.ex)
         for attempt in range(1, config.FIX_MAX_TRIES + 1):
             d = held[0] - held[1] - base
@@ -1110,7 +1123,7 @@ class Basket:
                 print("    legs back to their intended balance")
                 return
             x = math.ceil(diff - 1e-9)
-            books = self.books()
+            books = self.after_order(self.books)
             buy_px = fill_price(books[m]["asks"], x)      # buy x of the missing leg
             sell_px = fill_price(books[e]["bids"], x)     # or sell x of the extra leg
             inf = float("inf")
@@ -1135,14 +1148,14 @@ class Basket:
             except ApiError as err:
                 if 400 <= err.status < 500 and err.status not in (408, 429):
                     print(f"    fix order rejected, nothing traded ({err}); retrying")
-                    held = self.no_shares()
+                    held = self.after_order(self.no_shares)
                     continue                    # next try re-reads the book and re-prices
                 raise
             if r is None:                                 # dry run
                 return
             if r.get("open"):
-                self.r.cancel_all([self.ex[k]])
-            held = self.no_shares()
+                self.after_order(lambda: self.r.cancel_all([self.ex[k]]))
+            held = self.after_order(self.no_shares)
         if abs(held[0] - held[1] - base) <= 1e-9:      # the last try fixed it (live halt 12:05: it had)
             print("    legs back to their intended balance")
             return
