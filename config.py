@@ -76,7 +76,7 @@ ROTATE_TRIGGER_CASH = 50     # "out of budget" = less than this above the reserv
 # Balancing swaps (user, 2026-10-27): when no gain swap traded in a poll, a swap at gain >= 0 (no loss) is allowed
 # out of a market into one holding fewer pairs, at most floor((A - B) / 2) pairs (10 and 6 -> 8 and 8). Matching
 # queue: biggest seller first, each with the fewest-pairs target it can fund at >= 0. Pair counts, no minimum size.
-ROTATE_BALANCE = True        # user, 2026-11-03: back on ("add back rotation"; off earlier the same day)
+ROTATE_BALANCE = False       # user, 2026-11-04: "set edge > 0": no swaps at gain 0 (on again 2026-11-03 "add back rotation", off earlier that day)
 
 # Small-edge bucket (user, 2026-10-07): keep >= A_SMALL_FRAC of A's pairs (at cost) in races whose average
 # pair cost is >= 1 - A_SMALL_EDGE (bought at an edge <= 0.01). They sell near 1, so swaps (cheapest to
