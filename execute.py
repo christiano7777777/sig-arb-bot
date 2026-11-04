@@ -321,6 +321,8 @@ class Runner:
             self.e.step(q)
         entries, exits = [], []
         for b in self.baskets:
+            if b.paused():                    # no exit, entry or swap here until the pause ends
+                continue
             edge = self.top_edge(q, b)
             if edge is not None and edge >= config.MIN_EDGE - 1e-9:
                 entries.append((edge, b))
@@ -792,6 +794,8 @@ class Runner:
             bought (a failed buy changes nothing; a short sale leaves extra pairs bought at an edge)
           - otherwise -> sell first, then buy with what the sale freed, at a price that keeps the gain
         Returns True if it did any book reads."""
+        if b.paused():                       # paused earlier in this poll: send_pair would refuse the buy after the sale
+            return False
         # pre-check from the bulk quotes: the cheapest new pair is 1 - top edge, so no held race
         # bidding below that + ROTATE_MIN_GAIN can ever fund it. Then no book is read at all.
         gain = 0.0 if balance else config.ROTATE_MIN_GAIN
@@ -1097,6 +1101,9 @@ class Basket:
             except ApiError as err:
                 raise Halt(f"{self.name}: error while evening out legs: {err}. Check positions by hand.")
             after = self.after_order(self.no_shares)
+            # the same order would likely half-fill again, each repair at a loss (Alaska Senate, 2026-11-04)
+            self.paused_until = time.time() + config.ONE_SIDED_PAUSE_S
+            print(f"    {self.name}: half-filled order, paused {config.ONE_SIDED_PAUSE_S} s")
         return abs(min(after) - min(before))       # pairs actually bought / sold
 
     def after_order(self, call):

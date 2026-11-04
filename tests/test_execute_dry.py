@@ -74,6 +74,7 @@ def make_runner(fake, min_edge=0.005, exposure=None, capital=50_000, reserve=50_
                 cash_split=None, small_frac=None):
     # pin every setting the tests rely on, so editing config.py cannot silently change a test
     config.MIN_EDGE, config.MAX_UNHEDGED_EXPOSURE = min_edge, exposure
+    config.ONE_SIDED_PAUSE_S = 600
     config.MAX_CAPITAL_PER_RUN, config.RESERVE, config.PER_RACE_CAP = capital, reserve, race_cap
     config.EXIT_ENABLED, config.EXIT_MIN_SUM, config.TOURNAMENT_SLUG = True, 1.0, SLUG
     config.RACE_DENYLIST = set(denylist)
@@ -1029,6 +1030,66 @@ def test_read_error_inside_the_fix_does_not_halt():
     b.no_shares = _answers(answers)
     b.fix_imbalance([100, 90], "buy", [0.125, 0.885], 1.01)    # must return without Halt
     assert not book_answers and not answers and not execute.STOP_FILE.exists()
+
+
+EXIT_101 = {"D": ([(0.4, 1000)], [(0.45, 1000)]), "R": ([(0.4, 1000)], [(0.54, 1000)])}   # NO bids sum to 1.01
+
+
+def _exit_setup():
+    fake = FakeClient({"Kansas Senate": EXIT_101})
+    fake.held = {fake.ex_of("Kansas Senate", "D"): (-100, 50.0), fake.ex_of("Kansas Senate", "R"): (-100, 45.0)}
+    r = make_runner(fake)
+    return fake, r, basket(r, "Kansas Senate")
+
+
+def test_half_filled_order_pauses_the_race():
+    r, b = _after_order_runner()
+    b.no_shares = _answers([[90, 100], [90, 90]])
+    b.fix_imbalance = lambda held, action, limits, target, base: None
+    b.send_pair("sell", 10, [0.5, 0.49], [100, 100])
+    assert b.paused() and b.paused_until > time.time() + 590
+
+
+def test_fully_filled_order_does_not_pause():
+    r, b = _after_order_runner()
+    b.no_shares = lambda: [90, 90]
+    b.send_pair("sell", 10, [0.5, 0.49], [100, 100])
+    assert not b.paused()
+
+
+def test_paused_race_gets_no_exit_and_trades_again_after_the_pause():
+    fake, r, b = _exit_setup()
+    b.paused_until = time.time() + 100
+    r.poll()
+    assert r.sent == [] and not any(g.endswith("/orderbook") for g in fake.gets)
+    b.paused_until = 0.0
+    r.poll()
+    assert r.sent and all(x[1] == "sell" for x in legs_of(r.sent[0][1]))
+
+
+def test_paused_race_gets_no_swap_so_nothing_is_sold_for_it():
+    fake, r = _swap_setup()
+    basket(r, "New race").paused_until = time.time() + 100
+    r.poll()
+    assert r.sent == []
+
+
+def test_race_paused_during_the_poll_cannot_be_a_swap_target():
+    fake, r = _swap_setup()
+    q, held = r.quotes(), r.positions()
+    b = basket(r, "New race")
+    b.paused_until = time.time() + 100
+    assert r.rotate(b, q, held) is False and r.sent == []
+
+
+def test_other_races_keep_trading_while_one_is_paused():
+    fake = FakeClient({"Kansas Senate": EXIT_101, "Iowa Senate": EXIT_101})
+    fake.held = {fake.ex_of(n, x): (-100, 50.0) for n in ("Kansas Senate", "Iowa Senate") for x in "DR"}
+    r = make_runner(fake)
+    basket(r, "Kansas Senate").paused_until = time.time() + 100
+    r.poll()
+    ids = {x[0] for x in legs_of(r.sent[0][1])}
+    assert ids == {fake.ex_of("Iowa Senate", "D"), fake.ex_of("Iowa Senate", "R")}
 
 
 def test_own_order_drops_the_pushed_book():
