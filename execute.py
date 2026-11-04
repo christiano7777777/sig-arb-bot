@@ -323,7 +323,8 @@ class Runner:
         for b in self.baskets:
             edge = self.top_edge(q, b)
             if edge is not None and edge >= config.MIN_EDGE - 1e-9:
-                entries.append((edge, b))
+                if config.MAX_ENTRY_EDGE is None or edge <= config.MAX_ENTRY_EDGE + 1e-9:
+                    entries.append((edge, b))
             asks = [q.get(e, {}).get("bestAsk") for e in b.ex]       # YES asks -> NO bids
             pairs = min(held.get(e, {}).get("no", 0.0) for e in b.ex)
             if (config.EXIT_ENABLED and pairs >= 1 and None not in asks

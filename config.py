@@ -27,6 +27,7 @@ BASKETS = [
 
 TICK = 0.005        # limit prices must sit on this grid (0.005 .. 0.995)
 MIN_EDGE = 0.005    # trade only if 1 - cost >= MIN_EDGE per pair (set back to 0.005 on 2026-10-04)
+MAX_ENTRY_EDGE = 0.05    # user, 2026-11-04: bigger edges are skipped as stale prices (no cash buy, no swap into them); None = off
 TRADE_AT_ZERO_EDGE = False  # scan.py only
 
 # --- Capital (user, 2026-10-04) ---
