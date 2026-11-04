@@ -74,6 +74,7 @@ def make_runner(fake, min_edge=0.005, exposure=None, capital=50_000, reserve=50_
                 cash_split=None, small_frac=None):
     # pin every setting the tests rely on, so editing config.py cannot silently change a test
     config.MIN_EDGE, config.MAX_UNHEDGED_EXPOSURE = min_edge, exposure
+    config.FIX_NO_PRICE_MAX_SHARES = 1_000
     config.ONE_SIDED_PAUSE_S = 600
     config.MAX_CAPITAL_PER_RUN, config.RESERVE, config.PER_RACE_CAP = capital, reserve, race_cap
     config.EXIT_ENABLED, config.EXIT_MIN_SUM, config.TOURNAMENT_SLUG = True, 1.0, SLUG
@@ -1090,6 +1091,55 @@ def test_other_races_keep_trading_while_one_is_paused():
     r.poll()
     ids = {x[0] for x in legs_of(r.sent[0][1])}
     assert ids == {fake.ex_of("Iowa Senate", "D"), fake.ex_of("Iowa Senate", "R")}
+
+
+NO_PRICES = {"D": ([], []), "R": ([], [])}
+
+
+def _no_price_setup():
+    fake = FakeClient({"Kansas Senate": NO_PRICES})
+    r = make_runner(fake)
+    config.FIX_MAX_TRIES = 3
+    b = basket(r, "Kansas Senate")
+    b.b_race = True
+    return r, b
+
+
+def test_no_prices_small_gap_on_a_b_race_does_not_halt():
+    # live 2026-11-04 05:35: Maine Senate had no prices left, 230 shares unequal, and the whole bot halted
+    r, b = _no_price_setup()
+    b.fix_imbalance([230, 0], "sell", [0.075, 0.925], 1.01)
+    assert r.sent == [] and not execute.STOP_FILE.exists()
+
+
+def test_no_prices_big_gap_still_halts():
+    r, b = _no_price_setup()
+    try:
+        b.fix_imbalance([1001, 0], "sell", [0.075, 0.925], 1.01); assert False, "expected Halt"
+    except execute.Halt:
+        pass
+
+
+def test_no_prices_outside_b_races_still_halts():
+    r, b = _no_price_setup()
+    b.b_race = False
+    try:
+        b.fix_imbalance([230, 0], "sell", [0.075, 0.925], 1.01); assert False, "expected Halt"
+    except execute.Halt:
+        pass
+
+
+def test_no_prices_half_fill_pauses_the_race_without_a_halt():
+    r, b = _no_price_setup()
+    r.live = True
+    r.cancel_all = lambda exs: None
+    config.AFTER_ORDER_TRIES, config.AFTER_ORDER_WAIT_S = 3, 0
+    r.order = lambda path, body, label: {"results": [
+        {"data": {"exchangeId": l["exchangeId"], "quantityTraded": 0 if i == 0 else 230, "totalCost": 1, "open": i == 0}}
+        for i, l in enumerate(body["legs"])]}
+    b.no_shares = lambda: [230, 0]
+    b.send_pair("sell", 230, [0.075, 0.925], [230, 230])
+    assert b.paused() and not execute.STOP_FILE.exists()
 
 
 def test_own_order_drops_the_pushed_book():

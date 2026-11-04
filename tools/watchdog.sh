@@ -28,6 +28,14 @@ alert() {   # alert <kind> <text>
         || log "could not open the alert issue"
 }
 
+close_alert() {   # close_alert <kind>
+    local title="Bot watchdog: $1" n
+    for n in $(gh issue list -R "$GITHUB_REPOSITORY" --state open --search "\"$title\" in:title" --json number --jq '.[].number'); do
+        gh issue close "$n" -R "$GITHUB_REPOSITORY" -c "arb-bot.yml is active again." >/dev/null \
+            || log "could not close alert issue $n"
+    done
+}
+
 check() {
     local state runs health now in_progress poll age lasted
     now=$(date +%s)
@@ -36,6 +44,7 @@ check() {
         alert "bot workflow disabled" "arb-bot.yml is '$state' (a halt, or stopped by hand). Not restarting; see the last run's bot.log."
         return
     fi
+    close_alert "bot workflow disabled"     # on again: the next halt must open a new issue, or no email goes out
     runs=$(gh run list -R "$GITHUB_REPOSITORY" --workflow "$BOT" --limit 20 --json status,conclusion,startedAt,updatedAt) \
         || { log "read failed (runs), skipped"; return; }
     health=$(gh api "repos/$GITHUB_REPOSITORY/contents/health.json?ref=dashboard-data" -H "Accept: application/vnd.github.raw") \

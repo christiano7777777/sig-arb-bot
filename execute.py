@@ -1159,6 +1159,12 @@ class Basket:
             print(f"    UNEQUAL in {self.name} (try {attempt}): {diff:g} extra NO on {pe}. "
                   f"buy {pm} @{buy_px} -> {reform_loss:+.4f}/sh, sell {pe} @{sell_px} -> {unwind_loss:+.4f}/sh")
             if reform_loss == inf and unwind_loss == inf:
+                # no prices at all, likely a race resolving (Maine Senate, 2026-11-04 05:35): a small gap on a
+                # race allowed unequal legs stays open and send_pair pauses the race; thin books still halt
+                if (not books[m]["asks"] and not books[e]["bids"] and self.b_race
+                        and diff <= config.FIX_NO_PRICE_MAX_SHARES):
+                    print(f"    {self.name}: no prices to even out legs, {diff:g} extra NO on {pe} left open")
+                    return
                 break
             try:
                 if reform_loss <= unwind_loss:

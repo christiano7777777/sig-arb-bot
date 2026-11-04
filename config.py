@@ -58,6 +58,7 @@ MAX_UNHEDGED_EXPOSURE = 500  # worst-case SUSQies on an unpaired leg per attempt
 REJECT_PAUSE_S = 60         # a race whose pair order was rejected (4xx: nothing traded) is skipped this long
 ONE_SIDED_PAUSE_S = 600     # user, 2026-11-04: a race whose order half-filled is skipped this long
 FIX_MAX_TRIES = 3            # then halt (only if the book cannot absorb the fix)
+FIX_NO_PRICE_MAX_SHARES = 1_000  # user, 2026-11-04: no prices on a B race: a gap up to this is left open (paused, no halt); above it, halt
 AFTER_ORDER_TRIES = 6        # reads and cancels after an order: tries before a halt (user, 2026-11-04)
 AFTER_ORDER_WAIT_S = 5       # seconds between those tries; a 429 waits for its Retry-After, else 60 s
 
