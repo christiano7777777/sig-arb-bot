@@ -371,6 +371,46 @@ def test_rotation_big_edge_justifies_selling_below_0995():
     assert sum(x[3] for x in legs_of(r.sent[1][1])) <= 0.985 - 0.005 + 1e-9
 
 
+def _books_change_after_first_read(r, change):
+    """Target race's book changes after the swap's first read (prices moved before the sale)."""
+    b = basket(r, "New race")
+    real, calls = b.books, []
+    def books():
+        calls.append(1)
+        x = real()
+        if len(calls) >= 2:
+            change(x)
+        return x
+    b.books = books
+    return calls
+
+
+def test_swap_called_off_before_selling_when_the_buy_moved_away():
+    fake, r = _swap_setup()
+    def dearer(x):
+        x[0]["asks"] = [(round(p + 0.02, 3), q) for p, q in x[0]["asks"]]
+    calls = _books_change_after_first_read(r, dearer)
+    r.poll()
+    assert len(calls) >= 2 and r.sent == []                       # nothing sold
+
+
+def test_swap_cut_before_selling_when_the_buy_got_thin():
+    fake, r = _swap_setup()
+    def thin(x):
+        x[0]["asks"] = [(p, min(q, 100)) for p, q in x[0]["asks"]]
+    _books_change_after_first_read(r, thin)
+    r.poll()
+    assert len(r.sent) == 2
+    assert all(x[2] == 100 for x in legs_of(r.sent[0][1]))        # sold only what can still be bought
+
+
+def test_swap_unchanged_when_the_buy_still_works():
+    fake, r = _swap_setup()
+    calls = _books_change_after_first_read(r, lambda x: None)
+    r.poll()
+    assert len(calls) >= 3 and len(r.sent) == 2
+
+
 def test_swap_buys_only_what_the_sellers_can_absorb():
     # seller only has 20 pairs bid at 0.995 -> buy 20 new pairs first, then sell those 20
     seller = {"D": ([(0.4, 5)], [(0.5, 20)]), "R": ([(0.4, 5)], [(0.505, 20)])}

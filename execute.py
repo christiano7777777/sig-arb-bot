@@ -843,6 +843,21 @@ class Runner:
             print(f"  ROTATE {b.name}: no held race can sell at >= {sell_floor:.3f}")
         else:
             return True
+        # Last look before selling (user, 2026-11-04): the buy must still work on a fresh book, or the swap
+        # is called off / cut to what it can still buy, with nothing sold. Limits stay valid for fewer pairs.
+        check = b.plan(b.books(), min_edge=max(config.ROTATE_ENTRY_EDGE, 1.0 - sum(lim_n)), budget=float("inf"))
+        room = check[0] if check is not None else 0
+        if room < 1:
+            print(f"  ROTATE {b.name}: called off, the new pair is no longer <= {sum(lim_n):.3f}; nothing sold")
+            return True
+        kept = []
+        for a, (qs, lim_s, res_s, held_a) in sales:
+            take = min(qs, room)
+            if take >= 1:
+                kept.append((a, (take, lim_s, res_s, held_a)))
+                room -= take
+        sales = kept
+        q_swap = sum(x[1][0] for x in sales)
         names = [a.name for a, _ in sales]
         # Every swap must release cash (user, 2026-10-04): sell first, then buy at most the pairs sold,
         # at <= the sale price - ROTATE_MIN_GAIN, paid only from this sale's proceeds. Cash released
